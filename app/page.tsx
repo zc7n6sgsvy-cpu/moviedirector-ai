@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { 
-  Play, Pause, Plus, Trash2, Edit3, Film, Clapperboard, Wand2, 
+  Play, Pause, Plus, Trash2, Edit3, Film, Wand2, 
   ArrowLeft, Copy, Download, Users, Zap, Globe, Share2 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1034,13 +1034,11 @@ export default function MovieDirector() {
               }}
               className="flex items-center gap-3 cursor-pointer group"
             >
-              <div className="w-9 h-9 rounded bg-white flex items-center justify-center">
-                <Clapperboard className="w-5 h-5 text-[#050505]" />
-              </div>
-              <div>
-                <div className="font-display text-2xl tracking-[-1.5px] leading-none group-hover:text-[var(--gold)] transition-colors">MOVIEDIRECTOR</div>
-                <div className="text-[10px] text-[var(--gold)] tracking-[3px] -mt-0.5">POWERED BY GROK</div>
-              </div>
+              <img 
+                src="/logo.png" 
+                alt="MovieDirector.ai" 
+                className="h-10 w-auto drop-shadow-[0_0_8px_rgba(197,164,110,0.3)] group-hover:scale-105 transition-transform" 
+              />
             </div>
 
             <div className="ml-6 flex items-center gap-2 text-xs uppercase tracking-[2px] text-white/50">
@@ -1067,11 +1065,15 @@ export default function MovieDirector() {
           <div className="absolute inset-0 bg-[radial-gradient(#222_0.8px,transparent_1px)] bg-[length:4px_4px] opacity-50" />
           
           <div className="relative z-10 max-w-5xl">
-            <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full border border-white/20 text-xs tracking-[3px] mb-6">
+            <div className="flex justify-center mb-6">
+              <img src="/logo.png" alt="MovieDirector.ai" className="h-24 w-auto drop-shadow-[0_0_20px_rgba(197,164,110,0.4)]" />
+            </div>
+
+            <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full border border-white/20 text-xs tracking-[3px] mb-4">
               GROK IMAGINE + VIDEO • UNCHAINED CREATIVE ENGINE
             </div>
 
-            <h1 className="font-display text-[92px] leading-[0.86] tracking-[-6.5px] font-medium mb-4">
+            <h1 className="font-display text-[72px] leading-[0.9] tracking-[-4px] font-medium mb-4">
               MAKE THE<br />IMPOSSIBLE<br />WATCHABLE.
             </h1>
             
