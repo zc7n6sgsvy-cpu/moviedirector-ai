@@ -1086,7 +1086,12 @@ export default function MovieDirector() {
           
           <div className="relative z-10 max-w-5xl">
             <div className="flex justify-center mb-6">
-              <img src="/logo.png" alt="MovieDirector.ai" className="h-24 w-auto drop-shadow-[0_0_20px_rgba(197,164,110,0.4)]" />
+              <img 
+                src="/logo.png" 
+                alt="MovieDirector.ai" 
+                className="h-24 w-auto drop-shadow-[0_0_20px_rgba(197,164,110,0.4)]"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
             </div>
 
             <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full border border-white/20 text-xs tracking-[3px] mb-4">
