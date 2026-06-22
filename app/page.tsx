@@ -1037,7 +1037,24 @@ export default function MovieDirector() {
               <img 
                 src="/logo.png" 
                 alt="MovieDirector.ai" 
-                className="h-10 w-auto drop-shadow-[0_0_8px_rgba(197,164,110,0.3)] group-hover:scale-105 transition-transform" 
+                className="h-10 w-auto drop-shadow-[0_0_8px_rgba(197,164,110,0.3)] group-hover:scale-105 transition-transform"
+                onError={(e) => {
+                  // Fallback if logo.png not yet added
+                  const target = e.currentTarget;
+                  target.style.display = 'none';
+                  const fallback = document.createElement('div');
+                  fallback.className = 'flex items-center gap-3';
+                  fallback.innerHTML = `
+                    <div class="w-9 h-9 rounded bg-white flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-[#050505]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    </div>
+                    <div>
+                      <div class="font-display text-2xl tracking-[-1.5px] leading-none">MOVIEDIRECTOR</div>
+                      <div class="text-[10px] text-[var(--gold)] tracking-[3px] -mt-0.5">POWERED BY GROK</div>
+                    </div>
+                  `;
+                  target.parentNode.appendChild(fallback);
+                }}
               />
             </div>
 
