@@ -1037,7 +1037,7 @@ export default function MovieDirector() {
               <img 
                 src="/logo.png" 
                 alt="MovieDirector.ai" 
-                className="h-10 w-auto drop-shadow-[0_0_8px_rgba(197,164,110,0.3)] group-hover:scale-105 transition-transform"
+                className="h-12 w-auto drop-shadow-[0_0_10px_rgba(197,164,110,0.4)] group-hover:scale-[1.02] transition-all"
                 onError={(e) => {
                   // Fallback if logo.png not yet added to public/
                   const target = e.currentTarget as HTMLImageElement;
