@@ -1037,9 +1037,9 @@ export default function MovieDirector() {
               <img 
                 src="/logo.png" 
                 alt="MovieDirector.ai" 
-                className="h-12 w-auto drop-shadow-[0_0_10px_rgba(197,164,110,0.4)] group-hover:scale-[1.02] transition-all"
+                className="h-14 w-auto drop-shadow-[0_0_12px_rgba(197,164,110,0.5)] group-hover:scale-[1.01] transition-all"
+                style={{ maxWidth: '220px', objectFit: 'contain' }}
                 onError={(e) => {
-                  // Fallback if logo.png not yet added to public/
                   const target = e.currentTarget as HTMLImageElement;
                   target.style.display = 'none';
                   const parent = target.parentElement;
@@ -1085,11 +1085,11 @@ export default function MovieDirector() {
           <div className="absolute inset-0 bg-[radial-gradient(#222_0.8px,transparent_1px)] bg-[length:4px_4px] opacity-50" />
           
           <div className="relative z-10 max-w-5xl">
-            <div className="flex justify-center mb-6">
+            <div className="flex justify-center mb-8">
               <img 
                 src="/logo.png" 
                 alt="MovieDirector.ai" 
-                className="h-24 w-auto drop-shadow-[0_0_20px_rgba(197,164,110,0.4)]"
+                className="h-28 md:h-36 w-auto drop-shadow-[0_0_30px_rgba(197,164,110,0.6)]"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
             </div>
