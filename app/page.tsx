@@ -175,13 +175,37 @@ async function loadFeed() {
   return null;
 }
 
+async function loadConversations(authToken: string) {
+  try {
+    const res = await fetch('/api/messages', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (res.ok) return await res.json();
+  } catch (e) {}
+  return [];
+}
+
+async function loadMessages(otherUserId: string, authToken: string) {
+  try {
+    const res = await fetch(`/api/messages?with=${otherUserId}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (res.ok) return await res.json();
+  } catch (e) {}
+  return [];
+}
+
 export default function MovieDirector() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentUser, setCurrentUser] = useState<{ id: string; username: string } | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [feed, setFeed] = useState<any[]>([]); // Public feed items: {id, projectId, title, creator, logline, thumbnail?, publishedAt}
-  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed'>('landing');
+  const [feed, setFeed] = useState<any[]>([]); // Public feed items
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed' | 'messages'>('landing');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'timeline' | 'publish' | 'api'>('treatment');
 
@@ -231,6 +255,10 @@ export default function MovieDirector() {
               const data = await res.json();
               if (data.length > 0) setFeed(data);
             }
+          } catch {}
+          try {
+            const convos = await loadConversations(savedToken);
+            setConversations(convos);
           } catch {}
         })();
       } catch (e) {}
@@ -284,6 +312,36 @@ export default function MovieDirector() {
   useEffect(() => {
     localStorage.setItem('moviedirector_feed', JSON.stringify(feed));
   }, [feed]);
+
+  // Load conversations when user signs in or views messages
+  useEffect(() => {
+    if (currentUser && token && currentView === 'messages') {
+      loadConversations(token).then(setConversations);
+    }
+  }, [currentUser, token, currentView]);
+
+  async function sendMessage(toUserId: string) {
+    if (!newMessage.trim() || !token || !currentUser) return;
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ toUserId, content: newMessage.trim() }),
+      });
+      if (res.ok) {
+        const msg = await res.json();
+        setMessages(prev => [...prev, msg]);
+        setNewMessage('');
+        const convos = await loadConversations(token);
+        setConversations(convos);
+      }
+    } catch (e) {
+      // local demo fallback
+      const fakeMsg = { fromUserId: currentUser.id, toUserId, content: newMessage.trim(), createdAt: new Date() };
+      setMessages(prev => [...prev, fakeMsg]);
+      setNewMessage('');
+    }
+  }
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
 
@@ -1155,6 +1213,7 @@ export default function MovieDirector() {
           <div className="flex items-center gap-3 text-sm">
             <button onClick={() => { setCurrentView('dashboard'); setSelectedProjectId(null); }} className="btn-ghost px-3 py-1 rounded-full text-sm">Projects</button>
             <button onClick={() => setCurrentView('feed')} className="btn-ghost px-3 py-1 rounded-full text-sm">Feed</button>
+            <button onClick={() => setCurrentView('messages')} className="btn-ghost px-3 py-1 rounded-full text-sm">Messages</button>
             <button onClick={() => setCurrentView('social')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Share2 className="w-3.5 h-3.5"/> Social</button>
             <button onClick={() => setCurrentView('channels')} className="btn-ghost px-3 py-1 rounded-full text-sm">Channels</button>
             <button onClick={() => setCurrentView('ideas')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Zap className="w-3.5 h-3.5"/> Idea Lab</button>
@@ -1598,6 +1657,71 @@ export default function MovieDirector() {
           )}
 
           <div className="mt-12 text-xs text-white/50 text-center">This is the social heart: your finished films become content others discover, watch, and share — driving them to your channels.</div>
+        </div>
+      )}
+
+      {/* MESSAGES — Direct messaging system between users/creators */}
+      {currentView === 'messages' && (
+        <div className="max-w-5xl mx-auto px-8 py-12">
+          <div className="font-display text-5xl tracking-[-2px] mb-8">Messages</div>
+          
+          {!currentUser ? (
+            <div>Sign in to use messaging.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Conversations list */}
+              <div className="director-card p-4 rounded-3xl">
+                <div className="font-semibold mb-4">Conversations</div>
+                {conversations.length === 0 ? (
+                  <div className="text-sm text-white/60">No conversations yet. Message someone from their film in the Feed.</div>
+                ) : (
+                  conversations.map((c: any) => (
+                    <div 
+                      key={c._id} 
+                      onClick={async () => {
+                        setSelectedConversation(c._id);
+                        const msgs = await loadMessages(c._id, token!);
+                        setMessages(msgs);
+                      }}
+                      className={`p-3 rounded cursor-pointer mb-1 ${selectedConversation === c._id ? 'bg-white/10' : 'hover:bg-white/5'}`}
+                    >
+                      <div className="text-sm">@{c._id}</div>
+                      <div className="text-xs text-white/60 truncate">{c.lastMessage}</div>
+                      {c.unread > 0 && <span className="text-xs bg-[var(--gold)] text-black px-1 rounded">{c.unread}</span>}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Chat area */}
+              <div className="md:col-span-2 director-card p-4 rounded-3xl flex flex-col min-h-[400px]">
+                {selectedConversation ? (
+                  <>
+                    <div className="font-semibold mb-4 border-b border-white/10 pb-2">Chat with @{selectedConversation}</div>
+                    <div className="flex-1 overflow-auto mb-4 space-y-3 text-sm">
+                      {messages.map((m: any, i: number) => (
+                        <div key={i} className={`p-2 rounded ${m.fromUserId === currentUser.id ? 'bg-[var(--gold)] text-black ml-auto' : 'bg-white/10'} max-w-[70%]`}>
+                          {m.content}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input 
+                        value={newMessage} 
+                        onChange={(e) => setNewMessage(e.target.value)} 
+                        onKeyDown={(e) => { if (e.key === 'Enter') { sendMessage(selectedConversation); } }}
+                        className="flex-1 director-input px-3 py-2 rounded" 
+                        placeholder="Type a message..." 
+                      />
+                      <button onClick={() => sendMessage(selectedConversation)} className="btn-gold px-6 rounded">Send</button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center flex-1 text-white/60">Select a conversation</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
