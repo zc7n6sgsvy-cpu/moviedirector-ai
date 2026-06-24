@@ -1165,16 +1165,25 @@ export default function MovieDirector() {
             ) : (
               <button onClick={async () => {
                 const username = prompt('Username for account:', 'director' + Math.floor(Math.random()*100)) || 'creator';
-                const password = prompt('Set a password (demo, store securely in prod):', 'demo123') || 'demo123';
+                const password = prompt('Password (demo):', 'demo123') || 'demo123';
                 try {
-                  const res = await fetch('/api/auth/signup', {
+                  // Try login first
+                  let res = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password }),
                   });
                   if (!res.ok) {
+                    // Signup
+                    res = await fetch('/api/auth/signup', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ username, password }),
+                    });
+                  }
+                  if (!res.ok) {
                     const err = await res.json();
-                    alert(err.error || 'Signup failed');
+                    alert(err.error || 'Auth failed');
                     return;
                   }
                   const data = await res.json();
@@ -1182,11 +1191,10 @@ export default function MovieDirector() {
                   setCurrentUser(data.user);
                   localStorage.setItem('moviedirector_token', data.token);
                   localStorage.setItem('moviedirector_user', JSON.stringify(data.user));
-                  alert('Account created! You are now signed in.');
-                  // Load user's projects
+                  alert('Signed in!');
                   loadUserProjects(data.token);
                 } catch (e) {
-                  alert('Signup error. Using local mode.');
+                  alert('Using local demo mode (no DB).');
                   const user = { id: generateId(), username: username.toLowerCase().slice(0,20) };
                   setCurrentUser(user);
                 }
