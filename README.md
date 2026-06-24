@@ -76,3 +76,22 @@ Let's build the future of moving pictures.
 - "Episode feed" social view
 - Prompt memory + style bible per project
 - Collaborative rooms
+
+## Production Setup (MongoDB + Vercel + Render if needed)
+
+1. MongoDB Atlas: Create cluster, get connection string.
+2. `cp .env.example .env.local` and set MONGODB_URI, JWT_SECRET.
+3. `npm run dev` (needs local Mongo or Atlas).
+4. On Vercel: Set the same env vars for the project (acquire-investors-projects/moviedirector).
+5. For heavy background (e.g. video queues later): Deploy a worker to Render.com.
+
+Accounts now real via /api/auth/* 
+Main Feed via /api/feed + publish.
+
+For scale to 5k-10k: 
+- Mongo Atlas handles reads/writes.
+- Vercel API routes + edge for most.
+- Use Render for async workers if Grok gen volume high.
+- Add rate limits, pagination on feed.
+- Monitor xAI costs.
+
