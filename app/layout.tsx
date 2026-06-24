@@ -25,8 +25,12 @@ export const metadata: Metadata = {
   title: "MovieDirector.ai | Grok-Powered Cinema Studio",
   description: "The ultimate AI film studio. Create movies, sitcom episodes, brand fusions, commercials, and anime — powered by Grok's image and video generation. Direct at scale. Unchained.",
   icons: {
-    icon: "/logo.png",
-    apple: "/logo.png",
+    icon: [
+      { url: "/favicon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+    ],
+    shortcut: "/favicon-32.png",
+    apple: "/apple-touch-icon.png",
   },
   openGraph: {
     images: [{ url: "/logo.png" }],

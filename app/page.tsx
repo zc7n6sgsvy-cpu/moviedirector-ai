@@ -154,10 +154,32 @@ function createShotsFromTreatment(rawShots: Omit<Shot, 'id'>[]): Shot[] {
   }));
 }
 
+async function loadUserProjects(authToken: string) {
+  try {
+    const res = await fetch('/api/projects', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.length > 0) return data;
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function loadFeed() {
+  try {
+    const res = await fetch('/api/feed');
+    if (res.ok) return await res.json();
+  } catch (e) {}
+  return null;
+}
+
 export default function MovieDirector() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentUser, setCurrentUser] = useState<{ id: string; username: string } | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [feed, setFeed] = useState<any[]>([]); // Public feed items: {id, projectId, title, creator, logline, thumbnail?, publishedAt}
   const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed'>('landing');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -185,43 +207,61 @@ export default function MovieDirector() {
   const [showMovieRender, setShowMovieRender] = useState(false);
   const [movieRenderProgress, setMovieRenderProgress] = useState(0);
 
-  // Load from localStorage
+  // Load from localStorage + API if logged in
   useEffect(() => {
-    const savedProjects = localStorage.getItem('moviedirector_projects');
-    if (savedProjects) {
-      try {
-        setProjects(JSON.parse(savedProjects));
-      } catch (e) {}
-    }
-    const savedChannels = localStorage.getItem('moviedirector_channels');
-    if (savedChannels) {
-      try { setChannels(JSON.parse(savedChannels)); } catch(e){}
-    }
     const savedUser = localStorage.getItem('moviedirector_user');
-    if (savedUser) {
-      try { setCurrentUser(JSON.parse(savedUser)); } catch(e){}
-    }
-    const savedFeed = localStorage.getItem('moviedirector_feed');
-    if (savedFeed) {
-      try { setFeed(JSON.parse(savedFeed)); } catch(e){}
+    const savedToken = localStorage.getItem('moviedirector_token');
+    if (savedUser && savedToken) {
+      try {
+        const u = JSON.parse(savedUser);
+        setCurrentUser(u);
+        setToken(savedToken);
+        // Load from DB
+        (async () => {
+          try {
+            const res = await fetch('/api/projects', { headers: { Authorization: `Bearer ${savedToken}` } });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.length > 0) setProjects(data);
+            }
+          } catch {}
+          try {
+            const res = await fetch('/api/feed');
+            if (res.ok) {
+              const data = await res.json();
+              if (data.length > 0) setFeed(data);
+            }
+          } catch {}
+        })();
+      } catch (e) {}
+    } else {
+      const savedProjects = localStorage.getItem('moviedirector_projects');
+      if (savedProjects) {
+        try { setProjects(JSON.parse(savedProjects)); } catch (e) {}
+      }
+      const savedChannels = localStorage.getItem('moviedirector_channels');
+      if (savedChannels) {
+        try { setChannels(JSON.parse(savedChannels)); } catch(e){}
+      }
+      const savedFeed = localStorage.getItem('moviedirector_feed');
+      if (savedFeed) {
+        try { setFeed(JSON.parse(savedFeed)); } catch(e){}
+      }
     }
 
-    // Seed a killer demo project on first load if none exist
-    if (!savedProjects || JSON.parse(savedProjects || '[]').length === 0) {
-      const demo = createDemoProject();
-      setProjects([demo]);
-      localStorage.setItem('moviedirector_projects', JSON.stringify([demo]));
-    }
-
-    // Seed demo feed items if empty
-    if (!savedFeed || JSON.parse(savedFeed || '[]').length === 0) {
-      const mockFeed = [
-        { id: 'mock1', projectId: 'demo-mock', title: 'ODYSSEY 1975', creator: 'heavypulp', logline: 'A cinematic trailer for Homer\'s Odyssey shot as a 1970s classical epic.', publishedAt: new Date(Date.now() - 86400000*2).toISOString() },
-        { id: 'mock2', projectId: 'demo-mock2', title: 'The Last Signal', creator: 'aifilmmaker42', logline: 'A lone astronaut receives a message from Earth 50 years too late.', publishedAt: new Date(Date.now() - 86400000).toISOString() },
-      ];
-      setFeed(mockFeed);
-      localStorage.setItem('moviedirector_feed', JSON.stringify(mockFeed));
-    }
+    // Seed demo if nothing
+    setTimeout(() => {
+      if (projects.length === 0) {
+        const demo = createDemoProject();
+        setProjects([demo]);
+      }
+      if (feed.length === 0) {
+        const mockFeed = [
+          { id: 'mock1', projectId: 'demo-mock', title: 'ODYSSEY 1975', creator: 'heavypulp', logline: 'A cinematic trailer for Homer\'s Odyssey shot as a 1970s classical epic.', publishedAt: new Date(Date.now() - 86400000*2).toISOString() },
+        ];
+        setFeed(mockFeed);
+      }
+    }, 100);
   }, []);
 
   // Persist projects + channels + user + feed
@@ -313,7 +353,7 @@ export default function MovieDirector() {
     };
   }
 
-  function createProject() {
+  async function createProject() {
     if (!newProject.title.trim() || !newProject.logline.trim()) {
       toast.error("Give it a title and a logline. Directors don't wing it.");
       return;
@@ -325,8 +365,7 @@ export default function MovieDirector() {
       newProject.berserker
     );
 
-    const project: Project = {
-      id: generateId(),
+    const projectData: any = {
       title: newProject.title.trim(),
       type: newProject.type,
       logline: newProject.logline.trim(),
@@ -336,9 +375,24 @@ export default function MovieDirector() {
       berserker: newProject.berserker,
       shots: createShotsFromTreatment(treatment.shots),
       characters: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
     };
+
+    let project: Project;
+    if (token) {
+      // Save to DB
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(projectData),
+      });
+      if (res.ok) {
+        project = await res.json();
+      } else {
+        project = { id: generateId(), ...projectData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Project;
+      }
+    } else {
+      project = { id: generateId(), ...projectData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Project;
+    }
 
     setProjects(prev => [project, ...prev]);
     setSelectedProjectId(project.id);
@@ -1107,13 +1161,36 @@ export default function MovieDirector() {
             <button onClick={() => setShowNewModal(true)} className="flex items-center gap-1.5 px-4 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm"><Plus className="w-3.5 h-3.5"/> New</button>
             <div className="pl-4 border-l border-white/10 text-xs text-white/50 font-mono">GROK</div>
             {currentUser ? (
-              <button onClick={() => { setCurrentUser(null); localStorage.removeItem('moviedirector_user'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
+              <button onClick={() => { setCurrentUser(null); setToken(null); localStorage.removeItem('moviedirector_token'); localStorage.removeItem('moviedirector_user'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
             ) : (
-              <button onClick={() => {
-                const name = prompt('Creator username:', 'director' + Math.floor(Math.random()*100)) || 'creator';
-                const user = { id: generateId(), username: name.replace(/\\s+/g, '').toLowerCase().slice(0,20) };
-                setCurrentUser(user);
-              }} className="btn-gold text-black px-4 py-1 rounded-full text-sm">Sign in</button>
+              <button onClick={async () => {
+                const username = prompt('Username for account:', 'director' + Math.floor(Math.random()*100)) || 'creator';
+                const password = prompt('Set a password (demo, store securely in prod):', 'demo123') || 'demo123';
+                try {
+                  const res = await fetch('/api/auth/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                  });
+                  if (!res.ok) {
+                    const err = await res.json();
+                    alert(err.error || 'Signup failed');
+                    return;
+                  }
+                  const data = await res.json();
+                  setToken(data.token);
+                  setCurrentUser(data.user);
+                  localStorage.setItem('moviedirector_token', data.token);
+                  localStorage.setItem('moviedirector_user', JSON.stringify(data.user));
+                  alert('Account created! You are now signed in.');
+                  // Load user's projects
+                  loadUserProjects(data.token);
+                } catch (e) {
+                  alert('Signup error. Using local mode.');
+                  const user = { id: generateId(), username: username.toLowerCase().slice(0,20) };
+                  setCurrentUser(user);
+                }
+              }} className="btn-gold text-black px-4 py-1 rounded-full text-sm">Sign up / In</button>
             )}
           </div>
         </div>
@@ -2080,7 +2157,7 @@ export default function MovieDirector() {
 
               <div className="border-t border-white/10 px-9 py-5 flex justify-end gap-3 bg-black/30">
                 <button onClick={() => setShowNewModal(false)} className="px-8 py-3 text-sm text-white/70 hover:text-white">CANCEL</button>
-                <button onClick={createProject} className="btn-gold px-10 py-3 text-base rounded-2xl">CREATE PROJECT &amp; BREAK IT DOWN</button>
+                <button onClick={async () => await createProject()} className="btn-gold px-10 py-3 text-base rounded-2xl">CREATE PROJECT &amp; BREAK IT DOWN</button>
               </div>
             </motion.div>
           </div>

@@ -1,5 +1,7 @@
 # MovieDirector.ai
 
+![MovieDirector.ai Logo](/public/logo.png)
+
 **The AI film studio. Powered by Grok.**
 
 Create movies, sitcom episodes, brand fusion films, commercials, and anime at unprecedented speed and quality — with real Grok image + video generation under the hood.
