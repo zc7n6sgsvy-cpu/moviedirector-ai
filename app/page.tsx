@@ -157,7 +157,9 @@ function createShotsFromTreatment(rawShots: Omit<Shot, 'id'>[]): Shot[] {
 export default function MovieDirector() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
-  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social'>('landing');
+  const [currentUser, setCurrentUser] = useState<{ id: string; username: string } | null>(null);
+  const [feed, setFeed] = useState<any[]>([]); // Public feed items: {id, projectId, title, creator, logline, thumbnail?, publishedAt}
+  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed'>('landing');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'timeline' | 'publish' | 'api'>('treatment');
 
@@ -195,6 +197,14 @@ export default function MovieDirector() {
     if (savedChannels) {
       try { setChannels(JSON.parse(savedChannels)); } catch(e){}
     }
+    const savedUser = localStorage.getItem('moviedirector_user');
+    if (savedUser) {
+      try { setCurrentUser(JSON.parse(savedUser)); } catch(e){}
+    }
+    const savedFeed = localStorage.getItem('moviedirector_feed');
+    if (savedFeed) {
+      try { setFeed(JSON.parse(savedFeed)); } catch(e){}
+    }
 
     // Seed a killer demo project on first load if none exist
     if (!savedProjects || JSON.parse(savedProjects || '[]').length === 0) {
@@ -202,9 +212,19 @@ export default function MovieDirector() {
       setProjects([demo]);
       localStorage.setItem('moviedirector_projects', JSON.stringify([demo]));
     }
+
+    // Seed demo feed items if empty
+    if (!savedFeed || JSON.parse(savedFeed || '[]').length === 0) {
+      const mockFeed = [
+        { id: 'mock1', projectId: 'demo-mock', title: 'ODYSSEY 1975', creator: 'heavypulp', logline: 'A cinematic trailer for Homer\'s Odyssey shot as a 1970s classical epic.', publishedAt: new Date(Date.now() - 86400000*2).toISOString() },
+        { id: 'mock2', projectId: 'demo-mock2', title: 'The Last Signal', creator: 'aifilmmaker42', logline: 'A lone astronaut receives a message from Earth 50 years too late.', publishedAt: new Date(Date.now() - 86400000).toISOString() },
+      ];
+      setFeed(mockFeed);
+      localStorage.setItem('moviedirector_feed', JSON.stringify(mockFeed));
+    }
   }, []);
 
-  // Persist projects + channels
+  // Persist projects + channels + user + feed
   useEffect(() => {
     if (projects.length > 0) {
       localStorage.setItem('moviedirector_projects', JSON.stringify(projects));
@@ -214,6 +234,16 @@ export default function MovieDirector() {
   useEffect(() => {
     localStorage.setItem('moviedirector_channels', JSON.stringify(channels));
   }, [channels]);
+
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('moviedirector_user', JSON.stringify(currentUser));
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem('moviedirector_feed', JSON.stringify(feed));
+  }, [feed]);
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
 
@@ -1070,11 +1100,21 @@ export default function MovieDirector() {
 
           <div className="flex items-center gap-3 text-sm">
             <button onClick={() => { setCurrentView('dashboard'); setSelectedProjectId(null); }} className="btn-ghost px-3 py-1 rounded-full text-sm">Projects</button>
+            <button onClick={() => setCurrentView('feed')} className="btn-ghost px-3 py-1 rounded-full text-sm">Feed</button>
             <button onClick={() => setCurrentView('social')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Share2 className="w-3.5 h-3.5"/> Social</button>
             <button onClick={() => setCurrentView('channels')} className="btn-ghost px-3 py-1 rounded-full text-sm">Channels</button>
             <button onClick={() => setCurrentView('ideas')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Zap className="w-3.5 h-3.5"/> Idea Lab</button>
             <button onClick={() => setShowNewModal(true)} className="flex items-center gap-1.5 px-4 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm"><Plus className="w-3.5 h-3.5"/> New</button>
             <div className="pl-4 border-l border-white/10 text-xs text-white/50 font-mono">GROK</div>
+            {currentUser ? (
+              <button onClick={() => { setCurrentUser(null); localStorage.removeItem('moviedirector_user'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
+            ) : (
+              <button onClick={() => {
+                const name = prompt('Creator username:', 'director' + Math.floor(Math.random()*100)) || 'creator';
+                const user = { id: generateId(), username: name.replace(/\\s+/g, '').toLowerCase().slice(0,20) };
+                setCurrentUser(user);
+              }} className="btn-gold text-black px-4 py-1 rounded-full text-sm">Sign in</button>
+            )}
           </div>
         </div>
       </header>
@@ -1423,6 +1463,56 @@ export default function MovieDirector() {
           <div className="mt-12 text-center text-white/60 text-sm">
             This is how creators will build audiences in 2026. One film at a time. Your episodes become your content feed.
           </div>
+        </div>
+      )}
+
+      {/* MAIN FEED — Public discovery for everyone's films (social media core) */}
+      {currentView === 'feed' && (
+        <div className="max-w-6xl mx-auto px-8 py-12">
+          <div className="flex items-end justify-between mb-8">
+            <div>
+              <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">THE SOCIAL FEED</div>
+              <div className="text-6xl font-display tracking-[-2.5px]">Everyone's Films</div>
+            </div>
+            <div className="text-sm text-white/60">Films as posts. Episodes as content.</div>
+          </div>
+
+          {!currentUser && (
+            <div className="mb-6 p-4 bg-[#111] rounded-2xl text-center">
+              Sign in (top nav) to publish your films here and interact.
+            </div>
+          )}
+
+          {feed.length === 0 ? (
+            <div className="text-center py-20 border border-white/10 rounded-3xl">
+              <p className="text-white/60">No films in the feed yet. Publish from your project's Publish tab to share with everyone.</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {feed.map((item: any) => {
+                const proj = projects.find(p => p.id === item.projectId);
+                return (
+                  <div key={item.id} className="director-card p-6 rounded-3xl flex flex-col">
+                    <div className="text-xs text-white/50 mb-1">{new Date(item.publishedAt).toLocaleDateString()} • by @{item.creator}</div>
+                    <div className="font-display text-3xl tracking-tight mb-2">{item.title}</div>
+                    <p className="text-white/70 line-clamp-3 mb-4 flex-1">{item.logline}</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => { 
+                        if (proj) { 
+                          setSelectedProjectId(proj.id); 
+                          setCurrentView('workspace'); 
+                          setActiveTab('timeline'); 
+                        } 
+                      }} className="btn-gold flex-1 py-2 rounded-2xl text-sm text-black">Watch / Remix</button>
+                      <button onClick={() => toast('Liked! (demo)')} className="btn-outline px-4 rounded-2xl text-sm">♥</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-12 text-xs text-white/50 text-center">This is the social heart: your finished films become content others discover, watch, and share — driving them to your channels.</div>
         </div>
       )}
 
@@ -1855,6 +1945,30 @@ export default function MovieDirector() {
                     </div>
                     <div className="text-[10px] mt-3 text-white/50">Your audience discovers the full experience through your personal brand posts. Every video drives subs to your channel.</div>
                   </div>
+                </div>
+
+                {/* Publish to Main Public Feed for social discovery */}
+                <div className="mt-4 p-4 border border-white/10 rounded-3xl bg-[#0a0a0a]">
+                  <button 
+                    onClick={() => {
+                      if (!currentUser) { alert('Sign in first (top right) to publish to the main feed.'); return; }
+                      const newFeedItem = {
+                        id: generateId(),
+                        projectId: selectedProject.id,
+                        title: selectedProject.title,
+                        creator: currentUser.username,
+                        logline: selectedProject.logline,
+                        publishedAt: new Date().toISOString(),
+                      };
+                      setFeed(prev => [newFeedItem, ...prev.filter((f: any) => f.projectId !== selectedProject.id)]);
+                      toast.success('Published to the main Feed!');
+                      setCurrentView('feed');
+                    }} 
+                    className="btn-gold w-full py-3 rounded-2xl text-sm text-black"
+                  >
+                    Publish to Main Public Feed (for everyone)
+                  </button>
+                  <div className="text-[10px] mt-2 text-white/50 text-center">Your film will appear in the global Feed for discovery, likes, and shares.</div>
                 </div>
               </div>
             )}
