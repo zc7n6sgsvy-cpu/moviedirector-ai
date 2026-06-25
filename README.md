@@ -10,33 +10,51 @@ Create movies, sitcom episodes, brand fusion films, commercials, and anime at un
 
 One vision: **Your films are your feed.** Instead of posts, creators publish episodes. Personal branding at cinematic scale.
 
-## Current State — Ambitious Starter
+## Current State
 
-Fully functional director console built in Next.js:
+Fully functional director console (Next.js + MongoDB backend):
 
-- Project creation with type (Sitcom / Film / Commercial / Anime / Brand-Fusion)
-- **Berserker Mode** — Unchained creative mode, no limits
-- Intelligent treatment + shot breakdown generation
-- Interactive Storyboard with shot editing
-- "Generate Frame" → produces perfect Grok Imagine prompts (copy & use with me)
-- Clip Lab: Turn stills into video (using Grok video tech)
-- Drag-friendly Timeline + live sequence playback
-- Rich captions, VO, reordering
-- Export cut JSON
-- **Social Studio**: One-click platform cuts (9:16/16:9), AI captions + hashtags, thumbnail prompts, personal brand packs
-- Publish + Private Subscription Channels
-- Strong Director API surface + example
-- Cinematic dark UI with gold/crimson accents, film grain
+- Real user accounts (signup/login with MongoDB + JWT)
+- Project creation with rich concept, style template, and detailed shot list
+- Character + Style reference system for consistency
+- Advanced per-shot prompting (emotion, acting, dialogue, camera, sound cues)
+- Generation prompts ready for Grok Imagine (image + video)
+- Clip assembly + one-click "Render Full Movie" export package (with manifest + FFmpeg instructions)
+- **Main public Feed** — discover everyone's published films
+- **Messaging system** — DMs between creators
+- Private subscription Channels
+- Social Studio for platform-optimized cuts and personal brand drops
+- Official logo integrated
+- Cinematic dark UI
 
-## Run It
+Stack: Next.js 16 (Vercel) + MongoDB + GitHub (Render for workers if needed)
+
+## How to Start a Grok Session (from Terminal)
+
+1. Open your terminal
+2. Run:
+   ```bash
+   cd /Users/ryan/moviedirector
+   ```
+3. Launch Grok (the command you use to start this interactive CLI session — usually just `grok` or the build tool alias in your environment).
+4. Once the session starts, say something like:
+   - "Continue MovieDirector.ai"
+   - "Pick up where we left off on the app"
+   - Or "Load current state from SESSION_STATUS.md"
+
+I can instantly re-read the codebase, SESSION_STATUS.md, and GitHub to get back up to speed.
+
+## Run It Locally
 
 ```bash
-cd moviedirector
+cd /Users/ryan/moviedirector
 npm install
 npm run dev
 ```
 
 Open http://localhost:3000
+
+(See Production Setup below for MongoDB connection.)
 
 ## How Real Generation Works Today
 
@@ -63,10 +81,12 @@ Let's build the future of moving pictures.
 
 ## Tech
 
-- Next.js 16 + TypeScript + Tailwind
+- Next.js 16 (App Router) + TypeScript + Tailwind
+- MongoDB (Mongoose)
 - Framer Motion + Sonner
-- Local-first (localStorage persistence for now)
+- JWT auth
 - Designed for Grok Imagine + video generation
+- Deployed on Vercel with GitHub integration
 
 ## Next Steps (roadmap)
 
