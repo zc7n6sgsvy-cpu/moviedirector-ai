@@ -27,5 +27,8 @@ export function serializeFeedItem(item: object) {
     creatorId: (record.creatorId as { toString?: () => string })?.toString?.() ?? record.creatorId,
     projectId: (record.projectId as { toString?: () => string })?.toString?.() ?? record.projectId,
     likeCount: (record.likeCount as number) ?? 0,
+    commentCount: (record.commentCount as number) ?? 0,
+    ratingAvg: (record.ratingAvg as number) ?? 0,
+    ratingCount: (record.ratingCount as number) ?? 0,
   };
 }

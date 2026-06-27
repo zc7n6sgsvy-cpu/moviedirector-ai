@@ -8,6 +8,9 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import AuthModal from '@/components/AuthModal';
+import FilmDetailModal, { type FeedFilm } from '@/components/FilmDetailModal';
+import SharePanel from '@/components/SharePanel';
+import StarRating from '@/components/StarRating';
 
 // Types
 type ProjectType = 'sitcom' | 'film' | 'commercial' | 'anime' | 'brand-fusion';
@@ -219,9 +222,12 @@ async function loadMessages(otherUserId: string, authToken: string) {
     const res = await fetch(`/api/messages?with=${otherUserId}`, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      return Array.isArray(data) ? { messages: data, otherUser: { id: otherUserId, username: 'user' } } : data;
+    }
   } catch (e) {}
-  return [];
+  return { messages: [], otherUser: { id: otherUserId, username: 'user' } };
 }
 
 export default function MovieDirector() {
@@ -264,6 +270,10 @@ export default function MovieDirector() {
   const [feedCursor, setFeedCursor] = useState<string | null>(null);
   const [feedHasMore, setFeedHasMore] = useState(false);
   const [likedFeedIds, setLikedFeedIds] = useState<Set<string>>(new Set());
+  const [selectedFilm, setSelectedFilm] = useState<FeedFilm | null>(null);
+  const [chatPartner, setChatPartner] = useState<{ id: string; username: string } | null>(null);
+  const [userSearch, setUserSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<{ id: string; username: string; displayName: string }[]>([]);
   const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load from localStorage + API if logged in
@@ -310,19 +320,19 @@ export default function MovieDirector() {
       }
     }
 
-    // Seed demo if nothing
-    setTimeout(() => {
-      if (projects.length === 0) {
-        const demo = createDemoProject();
-        setProjects([demo]);
+    // Demo project for guests only (local preview — sign up to save)
+    if (!savedToken && !localStorage.getItem('moviedirector_projects')) {
+      setTimeout(() => setProjects([createDemoProject()]), 100);
+    }
+
+    // Always load public feed from API
+    loadFeed().then((feedData) => {
+      if (feedData?.items?.length) {
+        setFeed(feedData.items);
+        setFeedCursor(feedData.nextCursor);
+        setFeedHasMore(!!feedData.hasMore);
       }
-      if (feed.length === 0) {
-        const mockFeed = [
-          { id: 'mock1', projectId: 'demo-mock', title: 'ODYSSEY 1975', creator: 'heavypulp', logline: 'A cinematic trailer for Homer\'s Odyssey shot as a 1970s classical epic.', publishedAt: new Date(Date.now() - 86400000*2).toISOString() },
-        ];
-        setFeed(mockFeed);
-      }
-    }, 100);
+    }).catch(() => {});
   }, []);
 
   // Persist projects + channels + user + feed
@@ -359,6 +369,13 @@ export default function MovieDirector() {
     }
   }, [currentUser, token, currentView]);
 
+  function requireAuth(action: string): boolean {
+    if (currentUser && token) return true;
+    toast.error(`Sign in to ${action}`);
+    setShowAuthModal(true);
+    return false;
+  }
+
   async function sendMessage(toUserId: string) {
     if (!newMessage.trim() || !token || !currentUser) return;
     try {
@@ -373,13 +390,36 @@ export default function MovieDirector() {
         setNewMessage('');
         const convos = await loadConversations(token);
         setConversations(convos);
+      } else {
+        const err = await res.json();
+        toast.error(err.error || 'Message failed');
       }
-    } catch (e) {
-      // local demo fallback
-      const fakeMsg = { fromUserId: currentUser.id, toUserId, content: newMessage.trim(), createdAt: new Date() };
-      setMessages(prev => [...prev, fakeMsg]);
-      setNewMessage('');
+    } catch {
+      toast.error('Could not send message');
     }
+  }
+
+  async function openFilmDetail(item: FeedFilm) {
+    try {
+      const res = await fetch(`/api/feed/${item.id}`);
+      if (res.ok) {
+        const detail = await res.json();
+        setSelectedFilm(detail);
+      } else {
+        setSelectedFilm(item);
+      }
+    } catch {
+      setSelectedFilm(item);
+    }
+  }
+
+  async function searchUsers(q: string) {
+    setUserSearch(q);
+    if (!token || q.length < 2) { setSearchResults([]); return; }
+    const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) setSearchResults(await res.json());
   }
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
@@ -474,6 +514,7 @@ export default function MovieDirector() {
   }
 
   async function createProject() {
+    if (!requireAuth('create and save projects')) return;
     if (!newProject.title.trim() || !newProject.logline.trim()) {
       toast.error("Give it a title and a logline. Directors don't wing it.");
       return;
@@ -1450,7 +1491,7 @@ export default function MovieDirector() {
           <div className="flex items-center gap-3 text-sm">
             <button onClick={() => { setCurrentView('dashboard'); setSelectedProjectId(null); }} className="btn-ghost px-3 py-1 rounded-full text-sm">Projects</button>
             <button onClick={() => setCurrentView('feed')} className="btn-ghost px-3 py-1 rounded-full text-sm">Feed</button>
-            <button onClick={() => setCurrentView('messages')} className="btn-ghost px-3 py-1 rounded-full text-sm">Messages</button>
+            <button onClick={() => { if (!currentUser) { setShowAuthModal(true); return; } setCurrentView('messages'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">Messages</button>
             <button onClick={() => setCurrentView('social')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Share2 className="w-3.5 h-3.5"/> Social</button>
             <button onClick={() => setCurrentView('channels')} className="btn-ghost px-3 py-1 rounded-full text-sm">Channels</button>
             <button onClick={() => setCurrentView('ideas')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Zap className="w-3.5 h-3.5"/> Idea Lab</button>
@@ -1493,8 +1534,19 @@ export default function MovieDirector() {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              {!currentUser && (
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="btn-gold px-10 py-4 text-lg rounded-full"
+                >
+                  JOIN FREE — CREATE YOUR ACCOUNT
+                </button>
+              )}
               <button 
-                onClick={() => setShowNewModal(true)}
+                onClick={() => {
+                  if (!currentUser) { setShowAuthModal(true); return; }
+                  setShowNewModal(true);
+                }}
                 className="btn-gold px-10 py-4 text-lg rounded-full flex items-center justify-center gap-3"
               >
                 START DIRECTING <Wand2 className="w-5 h-5" />
@@ -1711,6 +1763,12 @@ export default function MovieDirector() {
       {/* SOCIAL STUDIO — Personal brand films + social drops */}
       {currentView === 'social' && (
         <div className="max-w-7xl mx-auto px-8 py-12">
+          {!currentUser && (
+            <div className="mb-8 p-5 rounded-2xl border border-[var(--gold)]/30 bg-[#111] text-center">
+              <p className="text-white/70 mb-3">Sign in to share your production series across TikTok, Reels, X, LinkedIn, and more.</p>
+              <button onClick={() => setShowAuthModal(true)} className="btn-gold px-8 py-2 rounded-full text-sm text-black">Join free</button>
+            </div>
+          )}
           <div className="flex items-end justify-between mb-8">
             <div>
               <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">PERSONAL BRAND CINEMA</div>
@@ -1824,8 +1882,11 @@ export default function MovieDirector() {
           </div>
 
           {!currentUser && (
-            <div className="mb-6 p-4 bg-[#111] rounded-2xl text-center">
-              Sign in (top nav) to publish your films here and interact.
+            <div className="mb-6 p-6 bg-[#111] rounded-2xl text-center border border-[var(--gold)]/20">
+              <p className="text-white/80 mb-3">Join like any social platform — rate films, discuss, message creators, and share your series.</p>
+              <button onClick={() => setShowAuthModal(true)} className="btn-gold px-8 py-2 rounded-full text-sm text-black">
+                Create free account
+              </button>
             </div>
           )}
 
@@ -1838,24 +1899,25 @@ export default function MovieDirector() {
               {feed.map((item: any) => {
                 const proj = projects.find(p => p.id === item.projectId);
                 return (
-                  <div key={item.id} className="director-card p-6 rounded-3xl flex flex-col">
+                  <div
+                    key={item.id}
+                    onClick={() => openFilmDetail(item)}
+                    className="director-card p-6 rounded-3xl flex flex-col cursor-pointer hover:border-[var(--gold)]/40 transition-colors"
+                  >
                     <div className="text-xs text-white/50 mb-1">{new Date(item.publishedAt).toLocaleDateString()} • by @{item.creator || item.creatorUsername}</div>
                     <div className="font-display text-3xl tracking-tight mb-2">{item.title}</div>
-                    <p className="text-white/70 line-clamp-3 mb-4 flex-1">{item.logline}</p>
-                    <div className="flex gap-2">
-                      <button onClick={() => { 
-                        if (proj) { 
-                          setSelectedProjectId(proj.id); 
-                          setCurrentView('workspace'); 
-                          setActiveTab('timeline'); 
-                        } 
-                      }} className="btn-gold flex-1 py-2 rounded-2xl text-sm text-black">Watch / Remix</button>
+                    <p className="text-white/70 line-clamp-3 mb-3 flex-1">{item.logline}</p>
+                    <div className="mb-3" onClick={(e) => e.stopPropagation()}>
+                      <StarRating value={item.ratingAvg || 0} readonly size="sm" />
+                      <span className="text-[10px] text-white/40 ml-1">
+                        {item.commentCount ? `${item.commentCount} comments` : 'Discuss'}
+                      </span>
+                    </div>
+                    <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => openFilmDetail(item)} className="btn-gold flex-1 py-2 rounded-2xl text-sm text-black">Watch & Discuss</button>
                       <button onClick={() => toggleLike(item.id)} className="btn-outline px-4 rounded-2xl text-sm">
-                        {likedFeedIds.has(item.id) ? '♥' : '♡'} {item.likeCount ? item.likeCount : ''}
+                        {likedFeedIds.has(item.id) ? '♥' : '♡'} {item.likeCount || ''}
                       </button>
-                      {item.creatorId && currentUser && item.creatorId !== currentUser.id && (
-                        <button onClick={() => { setSelectedConversation(item.creatorId); setCurrentView('messages'); }} className="btn-outline px-3 rounded-2xl text-sm">Msg</button>
-                      )}
                     </div>
                   </div>
                 );
@@ -1888,44 +1950,82 @@ export default function MovieDirector() {
       {/* MESSAGES — Direct messaging system between users/creators */}
       {currentView === 'messages' && (
         <div className="max-w-5xl mx-auto px-8 py-12">
-          <div className="font-display text-5xl tracking-[-2px] mb-8">Messages</div>
+          <div className="font-display text-5xl tracking-[-2px] mb-2">Messages</div>
+          <p className="text-white/60 text-sm mb-8">Connect with creators. Discuss films. Build your audience.</p>
           
           {!currentUser ? (
-            <div>Sign in to use messaging.</div>
+            <div className="director-card p-8 rounded-3xl text-center">
+              <p className="text-white/70 mb-4">Messaging works like any social app — sign in to chat with filmmakers.</p>
+              <button onClick={() => setShowAuthModal(true)} className="btn-gold px-8 py-2 rounded-full text-sm text-black">Create account</button>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Conversations list */}
               <div className="director-card p-4 rounded-3xl">
-                <div className="font-semibold mb-4">Conversations</div>
+                <div className="font-semibold mb-3">Conversations</div>
+                <input
+                  value={userSearch}
+                  onChange={(e) => searchUsers(e.target.value)}
+                  placeholder="Find creator by username…"
+                  className="director-input w-full px-3 py-2 rounded-xl text-sm mb-3"
+                />
+                {searchResults.length > 0 && (
+                  <div className="mb-3 border border-white/10 rounded-xl overflow-hidden">
+                    {searchResults.map((u) => (
+                      <button
+                        key={u.id}
+                        onClick={async () => {
+                          setSelectedConversation(u.id);
+                          setChatPartner({ id: u.id, username: u.username });
+                          const data = await loadMessages(u.id, token!);
+                          setMessages(data.messages);
+                          setUserSearch('');
+                          setSearchResults([]);
+                        }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-white/5"
+                      >
+                        @{u.username}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {conversations.length === 0 ? (
-                  <div className="text-sm text-white/60">No conversations yet. Message someone from their film in the Feed.</div>
+                  <div className="text-sm text-white/60">No conversations yet. Open a film in the Feed and message the creator.</div>
                 ) : (
-                  conversations.map((c: any) => (
+                  conversations.map((c: { userId: string; username: string; displayName?: string; lastMessage: string; unread: number }) => (
                     <div 
-                      key={c._id} 
+                      key={c.userId} 
                       onClick={async () => {
-                        setSelectedConversation(c._id);
-                        const msgs = await loadMessages(c._id, token!);
-                        setMessages(msgs);
+                        setSelectedConversation(c.userId);
+                        setChatPartner({ id: c.userId, username: c.username });
+                        const data = await loadMessages(c.userId, token!);
+                        setMessages(data.messages);
                       }}
-                      className={`p-3 rounded cursor-pointer mb-1 ${selectedConversation === c._id ? 'bg-white/10' : 'hover:bg-white/5'}`}
+                      className={`p-3 rounded-xl cursor-pointer mb-1 ${selectedConversation === c.userId ? 'bg-white/10' : 'hover:bg-white/5'}`}
                     >
-                      <div className="text-sm">@{c._id}</div>
+                      <div className="text-sm font-medium">@{c.username}</div>
                       <div className="text-xs text-white/60 truncate">{c.lastMessage}</div>
-                      {c.unread > 0 && <span className="text-xs bg-[var(--gold)] text-black px-1 rounded">{c.unread}</span>}
+                      {c.unread > 0 && <span className="text-xs bg-[var(--gold)] text-black px-1.5 rounded mt-1 inline-block">{c.unread}</span>}
                     </div>
                   ))
                 )}
               </div>
 
-              {/* Chat area */}
               <div className="md:col-span-2 director-card p-4 rounded-3xl flex flex-col min-h-[400px]">
                 {selectedConversation ? (
                   <>
-                    <div className="font-semibold mb-4 border-b border-white/10 pb-2">Chat with @{selectedConversation}</div>
+                    <div className="font-semibold mb-4 border-b border-white/10 pb-2">
+                      Chat with @{chatPartner?.username || 'creator'}
+                    </div>
                     <div className="flex-1 overflow-auto mb-4 space-y-3 text-sm">
-                      {messages.map((m: any, i: number) => (
-                        <div key={i} className={`p-2 rounded ${m.fromUserId === currentUser.id ? 'bg-[var(--gold)] text-black ml-auto' : 'bg-white/10'} max-w-[70%]`}>
+                      {messages.map((m: { id?: string; fromUserId: string; content: string }, i: number) => (
+                        <div
+                          key={m.id || i}
+                          className={`p-3 rounded-xl max-w-[80%] ${
+                            String(m.fromUserId) === String(currentUser.id)
+                              ? 'bg-[var(--gold)] text-black ml-auto'
+                              : 'bg-white/10'
+                          }`}
+                        >
                           {m.content}
                         </div>
                       ))}
@@ -1934,15 +2034,17 @@ export default function MovieDirector() {
                       <input 
                         value={newMessage} 
                         onChange={(e) => setNewMessage(e.target.value)} 
-                        onKeyDown={(e) => { if (e.key === 'Enter') { sendMessage(selectedConversation); } }}
-                        className="flex-1 director-input px-3 py-2 rounded" 
-                        placeholder="Type a message..." 
+                        onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(selectedConversation); }}
+                        className="flex-1 director-input px-3 py-2 rounded-xl" 
+                        placeholder="Type a message…" 
                       />
-                      <button onClick={() => sendMessage(selectedConversation)} className="btn-gold px-6 rounded">Send</button>
+                      <button onClick={() => sendMessage(selectedConversation)} className="btn-gold px-6 rounded-xl text-black">Send</button>
                     </div>
                   </>
                 ) : (
-                  <div className="flex items-center justify-center flex-1 text-white/60">Select a conversation</div>
+                  <div className="flex items-center justify-center flex-1 text-white/60 text-center px-8">
+                    Select a conversation or search for a creator to start chatting
+                  </div>
                 )}
               </div>
             </div>
@@ -2374,18 +2476,12 @@ export default function MovieDirector() {
                   <div className="mt-4 text-xs text-[var(--gold)]">{selectedProject.shots.filter(s => s.videoUrl).length} video clips • {selectedProject.shots.filter(s => s.imageUrl).length} stills ready as assets</div>
                 </div>
 
-                {/* Social Launch (new emphasis) */}
-                <div className="mt-6">
-                  <div className="uppercase tracking-widest text-xs mb-3 text-[var(--gold)]">SOCIAL MEDIA LAUNCH — PERSONAL BRAND</div>
-                  <div className="director-card p-6 rounded-3xl">
-                    <p className="mb-4 text-sm">Launch this film as part of your personal brand. Generate platform-specific cuts, captions, and thumbnails instantly.</p>
-                    <div className="flex flex-wrap gap-3">
-                      <button onClick={() => { setCurrentView('social'); }} className="btn-gold px-8 py-2 rounded-2xl text-sm text-black flex items-center gap-2"><Share2 className="w-4 h-4"/> OPEN SOCIAL STUDIO</button>
-                      <button onClick={() => createSocialRelease(selectedProject.id)} className="btn-outline px-6 py-2 rounded-2xl text-sm">Copy Launch Caption</button>
-                      <button onClick={() => { const cuts = generateSocialCuts(selectedProject); navigator.clipboard.writeText(JSON.stringify(cuts,null,2)); toast("Social cut plan copied for sharing"); }} className="btn-outline px-5 py-2 rounded-2xl text-sm">Get Cut Plan</button>
-                    </div>
-                    <div className="text-[10px] mt-3 text-white/50">Your audience discovers the full experience through your personal brand posts. Every video drives subs to your channel.</div>
-                  </div>
+                <div className="mt-6 director-card p-6 rounded-3xl">
+                  <SharePanel
+                    title={selectedProject.title}
+                    logline={selectedProject.logline}
+                    projectType={selectedProject.type}
+                  />
                 </div>
 
                 {/* Publish to Main Public Feed for social discovery */}
@@ -2396,7 +2492,7 @@ export default function MovieDirector() {
                   >
                     Publish to Main Public Feed (for everyone)
                   </button>
-                  <div className="text-[10px] mt-2 text-white/50 text-center">Your film will appear in the global Feed for discovery, likes, and shares.</div>
+                  <div className="text-[10px] mt-2 text-white/50 text-center">Your film appears in the global Feed — others can rate, discuss, message you, and share your series.</div>
                 </div>
               </div>
             )}
@@ -2557,6 +2653,25 @@ export default function MovieDirector() {
         )}
       </AnimatePresence>
 
+      <FilmDetailModal
+        film={selectedFilm}
+        token={token}
+        currentUserId={currentUser?.id}
+        onClose={() => setSelectedFilm(null)}
+        onAuthRequired={() => setShowAuthModal(true)}
+        onMessageCreator={(userId, username) => {
+          setSelectedFilm(null);
+          setSelectedConversation(userId);
+          setChatPartner({ id: userId, username });
+          setCurrentView('messages');
+          if (token) loadMessages(userId, token).then((d) => setMessages(d.messages));
+        }}
+        onUpdate={(patch) => {
+          setFeed((prev) => prev.map((item: FeedFilm) => item.id === patch.id ? { ...item, ...patch } : item));
+          setSelectedFilm((prev) => prev?.id === patch.id ? { ...prev, ...patch } : prev);
+        }}
+      />
+
       <AuthModal
         open={showAuthModal}
         onClose={() => setShowAuthModal(false)}
@@ -2567,6 +2682,8 @@ export default function MovieDirector() {
           localStorage.setItem('moviedirector_user', JSON.stringify(data.user));
           const userProjects = await loadUserProjects(data.token);
           if (userProjects?.length) setProjects(userProjects);
+          const feedData = await loadFeed();
+          if (feedData?.items?.length) setFeed(feedData.items);
           toast.success(`Welcome @${data.user.username}`);
         }}
       />

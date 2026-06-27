@@ -7,6 +7,9 @@ export interface IFeedItem extends Document {
   title: string;
   logline: string;
   likeCount: number;
+  commentCount: number;
+  ratingAvg: number;
+  ratingCount: number;
   publishedAt: Date;
 }
 
@@ -17,6 +20,9 @@ const FeedItemSchema: Schema = new Schema({
   title: { type: String, required: true },
   logline: { type: String, required: true },
   likeCount: { type: Number, default: 0 },
+  commentCount: { type: Number, default: 0 },
+  ratingAvg: { type: Number, default: 0 },
+  ratingCount: { type: Number, default: 0 },
   publishedAt: { type: Date, default: Date.now },
 });
 
