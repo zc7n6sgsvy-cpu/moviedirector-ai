@@ -1,41 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import Project from '@/models/Project';
-import jwt from 'jsonwebtoken';
+import { requireAuth } from '@/lib/auth';
+import { serializeDoc } from '@/lib/serialize';
+import { rateLimit, clientIp } from '@/lib/rate-limit';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-prod';
-
-function getUserFromToken(req: NextRequest) {
-  const auth = req.headers.get('authorization');
-  if (!auth) return null;
-  try {
-    const token = auth.replace('Bearer ', '');
-    return jwt.verify(token, JWT_SECRET) as { userId: string; username: string };
-  } catch {
-    return null;
-  }
-}
+const ALLOWED_CREATE_FIELDS = [
+  'title', 'type', 'logline', 'concept', 'synopsis', 'style', 'berserker', 'shots', 'characters',
+] as const;
 
 export async function GET(request: NextRequest) {
-  await dbConnect();
-  const user = getUserFromToken(request);
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const auth = requireAuth(request);
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const projects = await Project.find({ userId: user.userId }).sort({ updatedAt: -1 });
-  return NextResponse.json(projects);
+  await dbConnect();
+  const projects = await Project.find({ userId: auth.userId }).sort({ updatedAt: -1 });
+  return NextResponse.json(projects.map((p) => serializeDoc(p.toObject())));
 }
 
 export async function POST(request: NextRequest) {
-  await dbConnect();
-  const user = getUserFromToken(request);
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const auth = requireAuth(request);
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  const limited = rateLimit(`project-create:${auth.userId}:${clientIp(request)}`, 30, 60 * 60 * 1000);
+  if (!limited.ok) {
+    return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 });
+  }
 
   const body = await request.json();
+  await dbConnect();
+
+  const data: Record<string, unknown> = { userId: auth.userId };
+  for (const field of ALLOWED_CREATE_FIELDS) {
+    if (field in body) data[field] = body[field];
+  }
+
   const project = await Project.create({
-    userId: user.userId,
-    ...body,
+    ...data,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
-  return NextResponse.json(project);
+
+  return NextResponse.json(serializeDoc(project.toObject()));
 }

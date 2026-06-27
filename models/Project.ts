@@ -32,6 +32,8 @@ const ProjectSchema: Schema = new Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
+ProjectSchema.index({ userId: 1, updatedAt: -1 });
+
 ProjectSchema.pre('save', function(this: any, next: any) {
   this.updatedAt = new Date();
   next();

@@ -22,6 +22,7 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://moviedirector-psi.vercel.app'),
   title: "MovieDirector.ai | Grok-Powered Cinema Studio",
   description: "The ultimate AI film studio. Create movies, sitcom episodes, brand fusions, commercials, and anime — powered by Grok's image and video generation. Direct at scale. Unchained.",
   icons: {

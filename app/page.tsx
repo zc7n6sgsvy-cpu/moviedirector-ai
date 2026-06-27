@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Play, Pause, Plus, Trash2, Edit3, Film, Wand2, 
   ArrowLeft, Copy, Download, Users, Zap, Globe, Share2 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import AuthModal from '@/components/AuthModal';
 
 // Types
 type ProjectType = 'sitcom' | 'film' | 'commercial' | 'anime' | 'brand-fusion';
@@ -146,6 +147,16 @@ function generateId() {
   return Math.random().toString(36).slice(2, 11);
 }
 
+function normalizeProject(raw: Record<string, unknown>): Project {
+  const id = (raw.id as string) || (raw._id as { toString?: () => string })?.toString?.() || generateId();
+  return {
+    ...(raw as unknown as Project),
+    id,
+    createdAt: (raw.createdAt as string) || new Date().toISOString(),
+    updatedAt: (raw.updatedAt as string) || new Date().toISOString(),
+  };
+}
+
 function createShotsFromTreatment(rawShots: Omit<Shot, 'id'>[]): Shot[] {
   return rawShots.map((s, idx) => ({
     id: generateId(),
@@ -161,16 +172,34 @@ async function loadUserProjects(authToken: string) {
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.length > 0) return data;
+      if (data.length > 0) return data.map((p: Record<string, unknown>) => normalizeProject(p));
     }
   } catch (e) {}
   return null;
 }
 
-async function loadFeed() {
+async function loadFeed(cursor?: string) {
   try {
-    const res = await fetch('/api/feed');
-    if (res.ok) return await res.json();
+    const url = cursor ? `/api/feed?cursor=${encodeURIComponent(cursor)}` : '/api/feed';
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return { items: data.map((item: Record<string, unknown>) => ({
+          ...item,
+          id: item.id || (item._id as { toString?: () => string })?.toString?.(),
+          creator: item.creator || item.creatorUsername,
+        })), nextCursor: null, hasMore: false };
+      }
+      return {
+        items: (data.items || []).map((item: Record<string, unknown>) => ({
+          ...item,
+          creator: item.creator || item.creatorUsername,
+        })),
+        nextCursor: data.nextCursor,
+        hasMore: data.hasMore,
+      };
+    }
   } catch (e) {}
   return null;
 }
@@ -230,6 +259,12 @@ export default function MovieDirector() {
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
   const [showMovieRender, setShowMovieRender] = useState(false);
   const [movieRenderProgress, setMovieRenderProgress] = useState(0);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [activeGenJob, setActiveGenJob] = useState<{ id: string; progress: number; status: string } | null>(null);
+  const [feedCursor, setFeedCursor] = useState<string | null>(null);
+  const [feedHasMore, setFeedHasMore] = useState(false);
+  const [likedFeedIds, setLikedFeedIds] = useState<Set<string>>(new Set());
+  const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load from localStorage + API if logged in
   useEffect(() => {
@@ -243,17 +278,15 @@ export default function MovieDirector() {
         // Load from DB
         (async () => {
           try {
-            const res = await fetch('/api/projects', { headers: { Authorization: `Bearer ${savedToken}` } });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.length > 0) setProjects(data);
-            }
+            const data = await loadUserProjects(savedToken);
+            if (data?.length) setProjects(data);
           } catch {}
           try {
-            const res = await fetch('/api/feed');
-            if (res.ok) {
-              const data = await res.json();
-              if (data.length > 0) setFeed(data);
+            const feedData = await loadFeed();
+            if (feedData?.items?.length) {
+              setFeed(feedData.items);
+              setFeedCursor(feedData.nextCursor);
+              setFeedHasMore(!!feedData.hasMore);
             }
           } catch {}
           try {
@@ -313,6 +346,12 @@ export default function MovieDirector() {
     localStorage.setItem('moviedirector_feed', JSON.stringify(feed));
   }, [feed]);
 
+  useEffect(() => {
+    return () => {
+      if (genPollRef.current) clearInterval(genPollRef.current);
+    };
+  }, []);
+
   // Load conversations when user signs in or views messages
   useEffect(() => {
     if (currentUser && token && currentView === 'messages') {
@@ -344,6 +383,29 @@ export default function MovieDirector() {
   }
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
+
+  // Auto-save project edits to MongoDB
+  useEffect(() => {
+    if (!token || !selectedProject?.id) return;
+    const timeout = setTimeout(() => {
+      fetch(`/api/projects/${selectedProject.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: selectedProject.title,
+          type: selectedProject.type,
+          logline: selectedProject.logline,
+          concept: selectedProject.concept,
+          synopsis: selectedProject.synopsis,
+          style: selectedProject.style,
+          berserker: selectedProject.berserker,
+          shots: selectedProject.shots,
+          characters: selectedProject.characters,
+        }),
+      }).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(timeout);
+  }, [selectedProject, token]);
 
   function createDemoProject(): Project {
     const treatment = DEFAULT_TREATMENTS.sitcom(
@@ -444,7 +506,7 @@ export default function MovieDirector() {
         body: JSON.stringify(projectData),
       });
       if (res.ok) {
-        project = await res.json();
+        project = normalizeProject(await res.json());
       } else {
         project = { id: generateId(), ...projectData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Project;
       }
@@ -616,23 +678,33 @@ export default function MovieDirector() {
     return `${base} ${quality} ${typeFlavor} Ultra high resolution, masterpiece frame, coherent cinematic world.`;
   }
 
-  function simulateGenerateImage(shotId: string) {
+  async function simulateGenerateImage(shotId: string) {
     const shot = selectedProject?.shots.find(s => s.id === shotId);
-    if (!shot) return;
+    if (!shot || !selectedProject) return;
 
     const prompt = generateFramePrompt(shot);
+    navigator.clipboard.writeText(prompt).catch(() => {});
 
-    // Use a beautiful placeholder + encourage real generation
-    const seed = shot.id.slice(0, 6);
-    const placeholderUrl = `https://picsum.photos/seed/${seed}moviedir/960/540`;
+    if (!token) {
+      toast.error('Sign in to generate frames with Grok Imagine');
+      setShowAuthModal(true);
+      return;
+    }
 
-    updateShot(shotId, { imageUrl: placeholderUrl });
-
-    navigator.clipboard.writeText(prompt).then(() => {});
-
-    toast.success("Frame storyboarded.", {
-      description: "Prompt copied. Tell me 'generate this shot' and paste the prompt — I'll run Grok Imagine and give you the URL to paste in the shot.",
-    });
+    toast.loading('Generating frame with Grok Imagine…', { id: `gen-img-${shotId}` });
+    try {
+      const res = await fetch('/api/generate/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ prompt, projectId: selectedProject.id, shotId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Image generation failed');
+      updateShot(shotId, { imageUrl: data.imageUrl });
+      toast.success('Frame generated', { id: `gen-img-${shotId}` });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Generation failed', { id: `gen-img-${shotId}` });
+    }
   }
 
   // === CLIP LAB: IMAGE -> VIDEO ===
@@ -665,23 +737,132 @@ export default function MovieDirector() {
     return prompt;
   }
 
-  function simulateGenerateVideo(shotId: string) {
+  async function simulateGenerateVideo(shotId: string) {
     const shot = selectedProject?.shots.find(s => s.id === shotId);
-    if (!shot || !shot.imageUrl) {
-      toast.error("Generate the frame first. Video needs a source image.");
+    if (!shot || !selectedProject) return;
+
+    if (!shot.imageUrl && !shot.description) {
+      toast.error('Generate the frame first or add a shot description.');
       return;
     }
 
     const prompt = generateVideoPrompt(shot);
+    navigator.clipboard.writeText(prompt).catch(() => {});
 
-    // Placeholder: user can paste real video URL from me
-    const tempVideo = shot.imageUrl;
-    updateShot(shotId, { videoUrl: tempVideo });
+    if (!token) {
+      toast.error('Sign in to generate video clips');
+      setShowAuthModal(true);
+      return;
+    }
 
-    navigator.clipboard.writeText(prompt);
-    toast.success("Motion prompt copied.", {
-      description: "Say 'generate video from this frame' with the prompt. Paste the resulting mp4 URL into the shot using the input box below the storyboard card.",
-    });
+    const prevShot = selectedProject.shots
+      .filter(s => s.number < shot.number && s.videoUrl)
+      .sort((a, b) => b.number - a.number)[0];
+
+    const referenceImageUrls = [
+      selectedProject.style?.referenceImageUrl,
+      ...(selectedProject.characters || [])
+        .filter(c => shot.characterIds?.includes(c.id))
+        .map(c => c.referenceImageUrl)
+        .filter(Boolean),
+    ].filter(Boolean) as string[];
+
+    const mode = prevShot?.videoUrl && !shot.imageUrl
+      ? 'extend-video'
+      : shot.imageUrl
+        ? 'image-to-video'
+        : referenceImageUrls.length
+          ? 'reference-to-video'
+          : 'text-to-video';
+
+    toast.loading('Generating Grok video clip…', { id: `gen-vid-${shotId}` });
+    try {
+      const res = await fetch('/api/generate/video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          prompt,
+          imageUrl: shot.imageUrl,
+          videoUrl: prevShot?.videoUrl,
+          referenceImageUrls,
+          duration: shot.duration,
+          mode,
+          projectId: selectedProject.id,
+          shotId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Video generation failed');
+      updateShot(shotId, { videoUrl: data.videoUrl });
+      toast.success('Video clip ready', { id: `gen-vid-${shotId}` });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Generation failed', { id: `gen-vid-${shotId}` });
+    }
+  }
+
+  async function batchGenerateVideos() {
+    if (!selectedProject || !token) {
+      toast.error('Sign in to run batch generation');
+      setShowAuthModal(true);
+      return;
+    }
+
+    const pending = selectedProject.shots.filter(s => !s.videoUrl);
+    if (!pending.length) {
+      toast.info('All shots already have video clips');
+      return;
+    }
+
+    const prompts = Object.fromEntries(
+      pending.map(s => [s.id, generateVideoPrompt(s)])
+    );
+
+    toast.loading(`Queuing ${pending.length} clips…`, { id: 'batch-gen' });
+    try {
+      const res = await fetch('/api/generate/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          projectId: selectedProject.id,
+          shotIds: pending.map(s => s.id),
+          mode: 'batch-video',
+          prompts,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Batch queue failed');
+
+      setActiveGenJob({ id: data.jobId, progress: 0, status: 'processing' });
+      toast.success(`Batch started — est. $${data.costEstimate?.totalUsd ?? '?'}`, { id: 'batch-gen' });
+
+      if (genPollRef.current) clearInterval(genPollRef.current);
+      genPollRef.current = setInterval(async () => {
+        const jobRes = await fetch(`/api/generate/jobs/${data.jobId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!jobRes.ok) return;
+        const job = await jobRes.json();
+        setActiveGenJob({ id: job.id, progress: job.progress, status: job.status });
+
+        for (const item of job.items || []) {
+          if (item.status === 'done' && item.videoUrl) {
+            updateShot(item.shotId, { videoUrl: item.videoUrl, imageUrl: item.imageUrl });
+          }
+        }
+
+        if (job.status === 'done' || job.status === 'failed') {
+          if (genPollRef.current) clearInterval(genPollRef.current);
+          genPollRef.current = null;
+          if (job.status === 'done') toast.success('Batch generation complete');
+          else toast.error(job.error || 'Batch generation failed');
+          setActiveGenJob(null);
+          const refreshed = await loadUserProjects(token);
+          if (refreshed?.length) setProjects(refreshed);
+        }
+      }, 4000);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Batch failed', { id: 'batch-gen' });
+    }
   }
 
   // === CHARACTER CONSISTENCY (Full AI Movie Creation) ===
@@ -977,83 +1158,139 @@ export default function MovieDirector() {
   }
 
   async function renderFullMovie(project: Project) {
-    const clips = project.shots
-      .map(s => s.videoUrl)
-      .filter(Boolean) as string[];
+    const clips = project.shots.map(s => s.videoUrl).filter(Boolean) as string[];
 
-    if (clips.length < 3) {
-      toast.error("Need at least a few generated clips attached to shots to render a movie.");
+    if (clips.length < 1) {
+      toast.error('Need at least one generated clip to render a movie.');
+      return;
+    }
+
+    if (!token) {
+      toast.error('Sign in to render your film');
+      setShowAuthModal(true);
       return;
     }
 
     setShowMovieRender(true);
-    setMovieRenderProgress(0);
+    setMovieRenderProgress(5);
 
-    // Simulate realistic render steps (in real prod this would be server FFmpeg or cloud)
-    const steps = [
-      "Downloading clips & verifying order...",
-      "Applying continuity (color, audio levels)...",
-      "Adding transitions & pacing...",
-      "Mixing native audio + master layer...",
-      "Encoding final MP4 (1080p + 720p versions)..."
-    ];
+    try {
+      const res = await fetch('/api/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ projectId: project.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Render failed to start');
 
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise(r => setTimeout(r, 650));
-      setMovieRenderProgress(Math.round(((i + 1) / steps.length) * 100));
-    }
+      if (!data.workerQueued) {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        const manifest = {
+          project: project.title,
+          concept: project.concept,
+          style: project.style?.description,
+          totalDuration: project.shots.reduce((a, s) => a + s.duration, 0),
+          shotList: project.shots.map(s => ({
+            number: s.number,
+            description: s.description,
+            duration: s.duration,
+            videoSource: s.videoUrl || 'NOT_GENERATED',
+          })),
+          clipUrls: clips,
+          exportDate: new Date().toISOString(),
+        };
+        zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+        zip.file('clips.txt', clips.map((url, i) => `file 'clip_${String(i).padStart(3, '0')}.mp4'`).join('\n'));
+        const content = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${project.title.toLowerCase().replace(/\s+/g, '-')}-export-package.zip`;
+        a.click();
+        setMovieRenderProgress(100);
+        toast.success('Export package ready (deploy Render worker for stitched MP4)');
+        setTimeout(() => { setShowMovieRender(false); setMovieRenderProgress(0); }, 1200);
+        return;
+      }
 
-    // Create a professional export package using JSZip
-    const JSZip = (await import('jszip')).default;
-    const zip = new JSZip();
+      const poll = setInterval(async () => {
+        const jobRes = await fetch(`/api/render/${data.jobId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!jobRes.ok) return;
+        const job = await jobRes.json();
+        setMovieRenderProgress(job.progress || 10);
 
-    // Manifest with full shot list and metadata (for pro editors)
-    const manifest = {
-      project: project.title,
-      concept: project.concept,
-      style: project.style?.description,
-      totalDuration: project.shots.reduce((a, s) => a + s.duration, 0),
-      shotList: project.shots.map(s => ({
-        number: s.number,
-        description: s.description,
-        duration: s.duration,
-        emotion: s.emotion,
-        dialogue: s.dialogue,
-        videoSource: s.videoUrl || 'NOT_GENERATED'
-      })),
-      exportDate: new Date().toISOString(),
-      instructions: "Use FFmpeg or import the manifest + clips into DaVinci Resolve / Premiere for final polish."
-    };
-
-    zip.file("manifest.json", JSON.stringify(manifest, null, 2));
-    zip.file("README.txt", `MovieDirector.ai - ${project.title}\n\nFull movie rendered from ${clips.length} Grok Imagine clips.\n\nTo assemble: Use the provided FFmpeg command or load manifest into your editor.\n\nFFmpeg example:\nffmpeg -f concat -safe 0 -i clips.txt -c copy final_movie.mp4\n\n(clips.txt is auto-generated in real backend)`);
-
-    // Generate a simple clips.txt for concat
-    const concatList = project.shots
-      .filter(s => s.videoUrl)
-      .map((s, idx) => `file 'clip_${String(s.number).padStart(3,'0')}.mp4'`)
-      .join('\n');
-    zip.file("clips.txt", concatList);
-
-    // Add placeholder note for clips (in real would download actual)
-    zip.file("CLIPS_NOTE.txt", "In production this ZIP would contain or link to all .mp4 files in order.\nFor this demo, use the video URLs from your shots.");
-
-    const content = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(content);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${project.title.toLowerCase().replace(/\s+/g, '-')}-full-movie-package.zip`;
-    a.click();
-
-    setMovieRenderProgress(100);
-    toast.success("Full movie export package ready!", {
-      description: `${clips.length} clips assembled. Download the professional package with manifest + FFmpeg instructions.`
-    });
-
-    setTimeout(() => {
+        if (job.status === 'done' && job.outputUrl) {
+          clearInterval(poll);
+          setMovieRenderProgress(100);
+          const a = document.createElement('a');
+          a.href = job.outputUrl;
+          a.download = `${project.title.toLowerCase().replace(/\s+/g, '-')}.mp4`;
+          a.click();
+          toast.success('Full movie rendered!');
+          setTimeout(() => { setShowMovieRender(false); setMovieRenderProgress(0); }, 1200);
+        } else if (job.status === 'failed') {
+          clearInterval(poll);
+          toast.error(job.error || 'Render failed');
+          setShowMovieRender(false);
+          setMovieRenderProgress(0);
+        }
+      }, 5000);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Render failed');
       setShowMovieRender(false);
       setMovieRenderProgress(0);
-    }, 1200);
+    }
+  }
+
+  async function publishToFeed() {
+    if (!selectedProject || !token || !currentUser) {
+      toast.error('Sign in to publish to the feed');
+      setShowAuthModal(true);
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ projectId: selectedProject.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Publish failed');
+
+      const item = data.feedItem;
+      setFeed(prev => [item, ...prev.filter((f: { projectId?: string }) => f.projectId !== selectedProject.id)]);
+      toast.success('Published to the main Feed!');
+      setCurrentView('feed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Publish failed');
+    }
+  }
+
+  async function toggleLike(feedItemId: string) {
+    if (!token) {
+      setShowAuthModal(true);
+      return;
+    }
+    const res = await fetch('/api/feed/like', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ feedItemId }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    setFeed(prev => prev.map((item: { id: string; likeCount?: number }) =>
+      item.id === feedItemId ? { ...item, likeCount: data.likeCount ?? item.likeCount } : item
+    ));
+    setLikedFeedIds(prev => {
+      const next = new Set(prev);
+      if (data.liked) next.add(feedItemId);
+      else next.delete(feedItemId);
+      return next;
+    });
   }
 
   // === TIMELINE ===
@@ -1222,42 +1459,7 @@ export default function MovieDirector() {
             {currentUser ? (
               <button onClick={() => { setCurrentUser(null); setToken(null); localStorage.removeItem('moviedirector_token'); localStorage.removeItem('moviedirector_user'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
             ) : (
-              <button onClick={async () => {
-                const username = prompt('Username for account:', 'director' + Math.floor(Math.random()*100)) || 'creator';
-                const password = prompt('Password (demo):', 'demo123') || 'demo123';
-                try {
-                  // Try login first
-                  let res = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password }),
-                  });
-                  if (!res.ok) {
-                    // Signup
-                    res = await fetch('/api/auth/signup', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ username, password }),
-                    });
-                  }
-                  if (!res.ok) {
-                    const err = await res.json();
-                    alert(err.error || 'Auth failed');
-                    return;
-                  }
-                  const data = await res.json();
-                  setToken(data.token);
-                  setCurrentUser(data.user);
-                  localStorage.setItem('moviedirector_token', data.token);
-                  localStorage.setItem('moviedirector_user', JSON.stringify(data.user));
-                  alert('Signed in!');
-                  loadUserProjects(data.token);
-                } catch (e) {
-                  alert('Using local demo mode (no DB).');
-                  const user = { id: generateId(), username: username.toLowerCase().slice(0,20) };
-                  setCurrentUser(user);
-                }
-              }} className="btn-gold text-black px-4 py-1 rounded-full text-sm">Sign up / In</button>
+              <button onClick={() => setShowAuthModal(true)} className="btn-gold text-black px-4 py-1 rounded-full text-sm">Sign up / In</button>
             )}
           </div>
         </div>
@@ -1637,7 +1839,7 @@ export default function MovieDirector() {
                 const proj = projects.find(p => p.id === item.projectId);
                 return (
                   <div key={item.id} className="director-card p-6 rounded-3xl flex flex-col">
-                    <div className="text-xs text-white/50 mb-1">{new Date(item.publishedAt).toLocaleDateString()} • by @{item.creator}</div>
+                    <div className="text-xs text-white/50 mb-1">{new Date(item.publishedAt).toLocaleDateString()} • by @{item.creator || item.creatorUsername}</div>
                     <div className="font-display text-3xl tracking-tight mb-2">{item.title}</div>
                     <p className="text-white/70 line-clamp-3 mb-4 flex-1">{item.logline}</p>
                     <div className="flex gap-2">
@@ -1648,11 +1850,34 @@ export default function MovieDirector() {
                           setActiveTab('timeline'); 
                         } 
                       }} className="btn-gold flex-1 py-2 rounded-2xl text-sm text-black">Watch / Remix</button>
-                      <button onClick={() => toast('Liked! (demo)')} className="btn-outline px-4 rounded-2xl text-sm">♥</button>
+                      <button onClick={() => toggleLike(item.id)} className="btn-outline px-4 rounded-2xl text-sm">
+                        {likedFeedIds.has(item.id) ? '♥' : '♡'} {item.likeCount ? item.likeCount : ''}
+                      </button>
+                      {item.creatorId && currentUser && item.creatorId !== currentUser.id && (
+                        <button onClick={() => { setSelectedConversation(item.creatorId); setCurrentView('messages'); }} className="btn-outline px-3 rounded-2xl text-sm">Msg</button>
+                      )}
                     </div>
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {feedHasMore && (
+            <div className="mt-8 text-center">
+              <button
+                onClick={async () => {
+                  const data = await loadFeed(feedCursor || undefined);
+                  if (data?.items?.length) {
+                    setFeed(prev => [...prev, ...data.items]);
+                    setFeedCursor(data.nextCursor);
+                    setFeedHasMore(!!data.hasMore);
+                  }
+                }}
+                className="btn-outline px-8 py-2 rounded-2xl text-sm"
+              >
+                Load more films
+              </button>
             </div>
           )}
 
@@ -2063,11 +2288,18 @@ export default function MovieDirector() {
                     <div className="font-display text-4xl tracking-tight">Assemble &amp; Render Full Movie</div>
                     <div className="text-sm text-white/60">Drag order • Preview sequence • One-click full film export</div>
                   </div>
-                  <div className="flex gap-3">
-                    <button onClick={togglePlayback} className="btn-gold px-8 py-2 rounded-2xl text-sm text-black mr-1">{isPlaying ? 'STOP' : 'PLAY FULL FILM'}</button>
+                  <div className="flex flex-wrap gap-3">
+                    <button onClick={togglePlayback} className="btn-gold px-8 py-2 rounded-2xl text-sm text-black">{isPlaying ? 'STOP' : 'PLAY FULL FILM'}</button>
+                    <button
+                      onClick={batchGenerateVideos}
+                      disabled={!!activeGenJob || selectedProject.shots.every(s => s.videoUrl)}
+                      className="btn-outline px-6 py-2 rounded-2xl text-sm disabled:opacity-40"
+                    >
+                      {activeGenJob ? `GENERATING ${activeGenJob.progress}%` : 'BATCH GENERATE ALL CLIPS'}
+                    </button>
                     <button 
                       onClick={() => renderFullMovie(selectedProject)} 
-                      disabled={selectedProject.shots.filter(s => s.videoUrl).length < 2}
+                      disabled={selectedProject.shots.filter(s => s.videoUrl).length < 1}
                       className="btn-gold px-8 py-2 rounded-2xl text-sm text-black flex items-center gap-2 disabled:opacity-40"
                     >
                       🎬 RENDER FULL MOVIE
@@ -2159,20 +2391,7 @@ export default function MovieDirector() {
                 {/* Publish to Main Public Feed for social discovery */}
                 <div className="mt-4 p-4 border border-white/10 rounded-3xl bg-[#0a0a0a]">
                   <button 
-                    onClick={() => {
-                      if (!currentUser) { alert('Sign in first (top right) to publish to the main feed.'); return; }
-                      const newFeedItem = {
-                        id: generateId(),
-                        projectId: selectedProject.id,
-                        title: selectedProject.title,
-                        creator: currentUser.username,
-                        logline: selectedProject.logline,
-                        publishedAt: new Date().toISOString(),
-                      };
-                      setFeed(prev => [newFeedItem, ...prev.filter((f: any) => f.projectId !== selectedProject.id)]);
-                      toast.success('Published to the main Feed!');
-                      setCurrentView('feed');
-                    }} 
+                    onClick={publishToFeed}
                     className="btn-gold w-full py-3 rounded-2xl text-sm text-black"
                   >
                     Publish to Main Public Feed (for everyone)
@@ -2337,6 +2556,20 @@ export default function MovieDirector() {
           </div>
         )}
       </AnimatePresence>
+
+      <AuthModal
+        open={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={async (data) => {
+          setToken(data.token);
+          setCurrentUser(data.user);
+          localStorage.setItem('moviedirector_token', data.token);
+          localStorage.setItem('moviedirector_user', JSON.stringify(data.user));
+          const userProjects = await loadUserProjects(data.token);
+          if (userProjects?.length) setProjects(userProjects);
+          toast.success(`Welcome @${data.user.username}`);
+        }}
+      />
     </div>
   );
 }
