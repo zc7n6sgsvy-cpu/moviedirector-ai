@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import User from '@/models/User';
 import { requireAuth } from '@/lib/auth';
+import { escapeRegex } from '@/lib/ids';
 
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
 
   await dbConnect();
   const users = await User.find({
-    username: { $regex: q, $options: 'i' },
+    username: { $regex: escapeRegex(q), $options: 'i' },
     _id: { $ne: auth.userId },
   })
     .select('username displayName bio')

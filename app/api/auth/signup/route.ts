@@ -7,7 +7,7 @@ import { getJwtSecret } from '@/lib/auth';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
-  const limited = rateLimit(`signup:${clientIp(request)}`, 10, 60 * 60 * 1000);
+  const limited = await rateLimit(`signup:${clientIp(request)}`, 10, 60 * 60 * 1000);
   if (!limited.ok) {
     return NextResponse.json({ error: 'Too many signups. Try again later.' }, { status: 429 });
   }

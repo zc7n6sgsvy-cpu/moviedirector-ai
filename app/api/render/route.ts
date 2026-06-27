@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const limited = rateLimit(`render:${auth.userId}:${clientIp(req)}`, 10, 60 * 60 * 1000);
+  const limited = await rateLimit(`render:${auth.userId}:${clientIp(req)}`, 10, 60 * 60 * 1000);
   if (!limited.ok) {
     return NextResponse.json({ error: 'Rate limit exceeded', retryAfterSec: limited.retryAfterSec }, { status: 429 });
   }

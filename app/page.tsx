@@ -12,6 +12,7 @@ import FilmDetailModal, { type FeedFilm } from '@/components/FilmDetailModal';
 import SharePanel from '@/components/SharePanel';
 import StarRating from '@/components/StarRating';
 import UserProfile from '@/components/UserProfile';
+import { isValidObjectId } from '@/lib/ids';
 
 // Types
 type ProjectType = 'sitcom' | 'film' | 'commercial' | 'anime' | 'brand-fusion';
@@ -294,6 +295,7 @@ export default function MovieDirector() {
   const [chatPartner, setChatPartner] = useState<{ id: string; username: string } | null>(null);
   const [userSearch, setUserSearch] = useState('');
   const [searchResults, setSearchResults] = useState<{ id: string; username: string; displayName: string }[]>([]);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'error'>('idle');
   const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load from localStorage + API if logged in
@@ -454,23 +456,35 @@ export default function MovieDirector() {
 
   // Auto-save project edits to MongoDB
   useEffect(() => {
-    if (!token || !selectedProject?.id) return;
-    const timeout = setTimeout(() => {
-      fetch(`/api/projects/${selectedProject.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          title: selectedProject.title,
-          type: selectedProject.type,
-          logline: selectedProject.logline,
-          concept: selectedProject.concept,
-          synopsis: selectedProject.synopsis,
-          style: selectedProject.style,
-          berserker: selectedProject.berserker,
-          shots: selectedProject.shots,
-          characters: selectedProject.characters,
-        }),
-      }).catch(() => {});
+    if (!token || !selectedProject?.id || !isValidObjectId(selectedProject.id)) return;
+    const timeout = setTimeout(async () => {
+      setSaveStatus('saving');
+      try {
+        const res = await fetch(`/api/projects/${selectedProject.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            title: selectedProject.title,
+            type: selectedProject.type,
+            logline: selectedProject.logline,
+            concept: selectedProject.concept,
+            synopsis: selectedProject.synopsis,
+            style: selectedProject.style,
+            berserker: selectedProject.berserker,
+            shots: selectedProject.shots,
+            characters: selectedProject.characters,
+          }),
+        });
+        if (!res.ok) {
+          setSaveStatus('error');
+          toast.error('Failed to save project — check your connection');
+          return;
+        }
+        setSaveStatus('idle');
+      } catch {
+        setSaveStatus('error');
+        toast.error('Failed to save project — check your connection');
+      }
     }, 1200);
     return () => clearTimeout(timeout);
   }, [selectedProject, token]);
@@ -612,13 +626,50 @@ export default function MovieDirector() {
     );
   }
 
-  function deleteProject(id: string) {
-    setProjects(prev => prev.filter(p => p.id !== id));
-    if (selectedProjectId === id) {
-      setSelectedProjectId(null);
-      setCurrentView(projects.length > 1 ? 'dashboard' : 'landing');
+  async function deleteProject(id: string) {
+    if (!confirm('Delete this project permanently? This cannot be undone.')) return;
+
+    if (token && isValidObjectId(id)) {
+      try {
+        const res = await fetch(`/api/projects/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          toast.error('Failed to delete project');
+          return;
+        }
+      } catch {
+        toast.error('Failed to delete project');
+        return;
+      }
     }
-    toast.info("Project deleted from the vault.");
+
+    setProjects(prev => {
+      const next = prev.filter(p => p.id !== id);
+      if (selectedProjectId === id) {
+        setSelectedProjectId(null);
+        setCurrentView(next.length > 0 ? 'dashboard' : 'landing');
+      }
+      return next;
+    });
+    toast.info('Project deleted from the vault.');
+  }
+
+  function signOut() {
+    setToken(null);
+    setCurrentUser(null);
+    setChannels([]);
+    setSubscribedChannels([]);
+    setConversations([]);
+    setMessages([]);
+    setSelectedConversation(null);
+    setChatPartner(null);
+    setSelectedProjectId(null);
+    setCurrentView('landing');
+    localStorage.removeItem('moviedirector_token');
+    localStorage.removeItem('moviedirector_user');
+    toast.success('Signed out');
   }
 
   function regenerateTreatment() {
@@ -1552,7 +1603,10 @@ export default function MovieDirector() {
             <button onClick={() => setShowNewModal(true)} className="flex items-center gap-1.5 px-4 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm"><Plus className="w-3.5 h-3.5"/> New</button>
             <div className="pl-4 border-l border-white/10 text-xs text-white/50 font-mono">GROK</div>
             {currentUser ? (
-              <button onClick={() => openProfile(currentUser.username)} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
+              <>
+                <button onClick={() => openProfile(currentUser.username)} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
+                <button onClick={signOut} className="btn-ghost px-3 py-1 rounded-full text-sm text-white/50">Sign out</button>
+              </>
             ) : (
               <button onClick={() => setShowAuthModal(true)} className="btn-gold text-black px-4 py-1 rounded-full text-sm">Sign up / In</button>
             )}
@@ -1726,7 +1780,7 @@ export default function MovieDirector() {
             <div>
               <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">PRODUCTION SERIES</div>
               <div className="text-6xl font-display tracking-[-2.5px]">Your Channels</div>
-              <p className="text-white/60 text-sm mt-2">Serialized sitcoms and films — subscribers get every episode. Share your profile link.</p>
+              <p className="text-white/60 text-sm mt-2">Serialized sitcoms and films — subscribers get every episode. Beta: subscriptions are free.</p>
             </div>
             <button onClick={() => setShowChannelModal(true)} className="btn-gold px-8 py-3 rounded-full flex items-center gap-2">
               <Plus className="w-5 h-5"/> NEW SERIES
@@ -1765,7 +1819,7 @@ export default function MovieDirector() {
                     <div className="flex justify-between">
                       <div>
                         <div className="font-display text-4xl tracking-tight">{ch.name}</div>
-                        <div className="text-white/60 mt-1">${ch.price}/mo • {ch.projectIds.length} episodes • {ch.subscriberCount ?? 0} subscribers</div>
+                        <div className="text-white/60 mt-1">Beta — free • {ch.projectIds.length} episodes • {ch.subscriberCount ?? 0} subscribers</div>
                       </div>
                       <div className="text-right text-xs text-white/50">PRIVATE</div>
                     </div>
@@ -1793,7 +1847,7 @@ export default function MovieDirector() {
                     </div>
 
                     <div className="mt-6 pt-4 border-t border-white/10 text-xs text-white/50 flex justify-between items-center">
-                      <div>MRR ${Math.round(ch.price * (ch.subscriberCount ?? 0))} • {ch.subscriberCount ?? 0} subscribers</div>
+                      <div>{ch.subscriberCount ?? 0} subscribers • Beta — free</div>
                       <button
                         onClick={() => {
                           if (!currentUser) return;
@@ -2192,6 +2246,11 @@ export default function MovieDirector() {
               </div>
 
               <div className="flex items-center gap-6 text-sm">
+                {token && isValidObjectId(selectedProject.id) && saveStatus !== 'idle' && (
+                  <div className={`text-xs ${saveStatus === 'error' ? 'text-red-400' : 'text-white/40'}`}>
+                    {saveStatus === 'saving' ? 'Saving…' : 'Save failed'}
+                  </div>
+                )}
                 <div className="text-right">
                   <div className="text-white/50 text-xs">RUNTIME</div>
                   <div className="font-mono text-xl tabular-nums tracking-tighter">{Math.floor(totalRuntime / 60)}:{(totalRuntime % 60).toString().padStart(2, '0')}</div>
@@ -2585,7 +2644,7 @@ export default function MovieDirector() {
                   <div className="uppercase text-xs tracking-widest mb-3">YOUR CHANNELS</div>
                   {channels.length > 0 ? channels.map(ch => (
                     <div key={ch.id} className="flex items-center justify-between bg-[#111] p-4 rounded-2xl mb-3">
-                      <div>{ch.name} — ${ch.price}/mo</div>
+                      <div>{ch.name} — Beta, free</div>
                       <button onClick={() => addProjectToChannel(ch.id, selectedProject.id)} className="btn-gold text-xs px-5 py-1.5 rounded-xl text-black">ADD THIS PROJECT TO CHANNEL</button>
                     </div>
                   )) : <div className="text-white/50">Create a channel from the top nav.</div>}
@@ -2753,16 +2812,10 @@ export default function MovieDirector() {
           <div className="fixed inset-0 bg-black/90 z-[110] flex items-center justify-center p-6">
             <motion.div initial={{opacity:0, y:20}} animate={{opacity:1,y:0}} className="bg-[#0a0a0a] border border-white/10 rounded-3xl max-w-md w-full p-8">
               <div className="font-display text-4xl tracking-tight mb-2">New Private Channel</div>
-              <p className="text-sm text-white/60 mb-8">Your subscribers get serialized episodes. You get recurring revenue + total control.</p>
+              <p className="text-sm text-white/60 mb-8">Your subscribers get serialized episodes. Beta: subscriptions are free while we build payments.</p>
 
               <input value={newChannel.name} onChange={e => setNewChannel({...newChannel, name: e.target.value})} placeholder="Channel name e.g. The Alex Rivera Sitcom" className="director-input w-full px-5 py-3 text-xl rounded-2xl mb-4" />
-              <input value={newChannel.description} onChange={e => setNewChannel({...newChannel, description: e.target.value})} placeholder="Short description for subscribers" className="director-input w-full px-5 py-3 rounded-2xl mb-4" />
-              
-              <div className="flex items-center gap-4 mb-8">
-                <div>$</div>
-                <input type="number" value={newChannel.price} onChange={e => setNewChannel({...newChannel, price: parseInt(e.target.value)||9})} className="director-input w-24 px-4 py-2 rounded-2xl" />
-                <div className="text-white/50">/ month</div>
-              </div>
+              <input value={newChannel.description} onChange={e => setNewChannel({...newChannel, description: e.target.value})} placeholder="Short description for subscribers" className="director-input w-full px-5 py-3 rounded-2xl mb-8" />
 
               <div className="flex gap-3">
                 <button onClick={() => setShowChannelModal(false)} className="flex-1 py-3 text-white/70">Cancel</button>

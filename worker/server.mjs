@@ -14,6 +14,11 @@ const execFileAsync = promisify(execFile);
 const PORT = process.env.PORT || 10000;
 const SECRET = process.env.RENDER_WORKER_SECRET || '';
 
+if (!SECRET) {
+  console.error('RENDER_WORKER_SECRET must be set — refusing to start');
+  process.exit(1);
+}
+
 async function downloadFile(url, dest) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed ${url}: ${res.status}`);
@@ -60,7 +65,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   const auth = req.headers.authorization || '';
-  if (SECRET && auth !== `Bearer ${SECRET}`) {
+  if (auth !== `Bearer ${SECRET}`) {
     res.writeHead(401);
     res.end('Unauthorized');
     return;

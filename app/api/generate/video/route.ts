@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import { requireAuth } from '@/lib/auth';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
+import { verifyProjectAccess } from '@/lib/project-auth';
 import { generateVideo } from '@/lib/xai';
 import { persistRemoteAsset } from '@/lib/storage';
 
@@ -11,7 +12,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const limited = rateLimit(`gen-video:${auth.userId}:${clientIp(req)}`, 20, 60 * 60 * 1000);
+  const limited = await rateLimit(`gen-video:${auth.userId}:${clientIp(req)}`, 20, 60 * 60 * 1000);
   if (!limited.ok) {
     return NextResponse.json({ error: 'Rate limit exceeded', retryAfterSec: limited.retryAfterSec }, { status: 429 });
   }
@@ -24,6 +25,11 @@ export async function POST(req: NextRequest) {
   const { prompt, imageUrl, videoUrl, referenceImageUrls, duration, mode, projectId, shotId } = body;
 
   if (!prompt) return NextResponse.json({ error: 'prompt required' }, { status: 400 });
+  if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });
+
+  await dbConnect();
+  const access = await verifyProjectAccess(auth.userId, projectId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   try {
     const result = await generateVideo({
@@ -37,7 +43,7 @@ export async function POST(req: NextRequest) {
 
     const stored = await persistRemoteAsset(
       result.url,
-      `clips/${projectId || 'single'}/${shotId || Date.now()}.mp4`
+      `clips/${projectId}/${shotId || Date.now()}.mp4`
     );
 
     return NextResponse.json({

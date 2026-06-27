@@ -182,7 +182,7 @@ export default function UserProfile({
             {profile.channels.map((ch) => (
               <div key={ch.id} className="director-card p-6 rounded-3xl">
                 <div className="font-display text-2xl tracking-tight">{ch.name}</div>
-                <div className="text-sm text-white/50 mt-1">${ch.price}/mo • {ch.subscriberCount} subscribers • {ch.episodes.length} episodes</div>
+                <div className="text-sm text-white/50 mt-1">Beta — free • {ch.subscriberCount} subscribers • {ch.episodes.length} episodes</div>
                 <p className="text-white/70 text-sm mt-3">{ch.description}</p>
                 {ch.episodes.length > 0 && (
                   <div className="mt-4 space-y-1">
@@ -198,7 +198,7 @@ export default function UserProfile({
                     onClick={() => toggleSubscribe(ch.id)}
                     className={`mt-4 w-full py-2.5 rounded-xl text-sm ${ch.isSubscribed ? 'btn-outline' : 'btn-gold text-black'}`}
                   >
-                    {ch.isSubscribed ? 'Subscribed ✓' : `Subscribe — $${ch.price}/mo`}
+                    {ch.isSubscribed ? 'Subscribed ✓' : 'Subscribe — Beta, free'}
                   </button>
                 )}
               </div>
