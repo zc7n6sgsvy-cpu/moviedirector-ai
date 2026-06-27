@@ -11,6 +11,7 @@ import AuthModal from '@/components/AuthModal';
 import FilmDetailModal, { type FeedFilm } from '@/components/FilmDetailModal';
 import SharePanel from '@/components/SharePanel';
 import StarRating from '@/components/StarRating';
+import UserProfile from '@/components/UserProfile';
 
 // Types
 type ProjectType = 'sitcom' | 'film' | 'commercial' | 'anime' | 'brand-fusion';
@@ -55,6 +56,7 @@ interface Channel {
   description: string;
   price: number;
   projectIds: string[];
+  subscriberCount?: number;
   createdAt: string;
 }
 
@@ -181,6 +183,22 @@ async function loadUserProjects(authToken: string) {
   return null;
 }
 
+async function loadChannels(authToken: string) {
+  try {
+    const res = await fetch('/api/channels', { headers: { Authorization: `Bearer ${authToken}` } });
+    if (res.ok) return await res.json();
+  } catch {}
+  return [];
+}
+
+async function loadSubscriptions(authToken: string) {
+  try {
+    const res = await fetch('/api/channels/subscriptions', { headers: { Authorization: `Bearer ${authToken}` } });
+    if (res.ok) return await res.json();
+  } catch {}
+  return [];
+}
+
 async function loadFeed(cursor?: string) {
   try {
     const url = cursor ? `/api/feed?cursor=${encodeURIComponent(cursor)}` : '/api/feed';
@@ -240,7 +258,9 @@ export default function MovieDirector() {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed' | 'messages'>('landing');
+  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed' | 'messages' | 'profile'>('landing');
+  const [profileUsername, setProfileUsername] = useState<string | null>(null);
+  const [subscribedChannels, setSubscribedChannels] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'timeline' | 'publish' | 'api'>('treatment');
 
@@ -303,6 +323,14 @@ export default function MovieDirector() {
             const convos = await loadConversations(savedToken);
             setConversations(convos);
           } catch {}
+          try {
+            const chs = await loadChannels(savedToken);
+            if (chs.length) setChannels(chs);
+          } catch {}
+          try {
+            const subs = await loadSubscriptions(savedToken);
+            setSubscribedChannels(subs);
+          } catch {}
         })();
       } catch (e) {}
     } else {
@@ -343,8 +371,8 @@ export default function MovieDirector() {
   }, [projects]);
 
   useEffect(() => {
-    localStorage.setItem('moviedirector_channels', JSON.stringify(channels));
-  }, [channels]);
+    if (!token) localStorage.setItem('moviedirector_channels', JSON.stringify(channels));
+  }, [channels, token]);
 
   useEffect(() => {
     if (currentUser) {
@@ -1071,42 +1099,68 @@ export default function MovieDirector() {
     toast("Commercial variants generated", { description: "Copied. Create new projects from each angle." });
   }
 
-  // === PRIVATE SUBSCRIPTION CHANNELS ===
-  function createChannel() {
+  // === PRIVATE SUBSCRIPTION CHANNELS (MongoDB-backed) ===
+  async function createChannel() {
+    if (!requireAuth('create channels')) return;
     if (!newChannel.name.trim()) {
-      toast.error("Channel needs a name");
+      toast.error('Channel needs a name');
       return;
     }
-    const ch: Channel = {
-      id: generateId(),
-      name: newChannel.name.trim(),
-      description: newChannel.description.trim() || "Private subscription series.",
-      price: newChannel.price,
-      projectIds: [],
-      createdAt: new Date().toISOString()
-    };
-    setChannels(prev => [...prev, ch]);
-    setShowChannelModal(false);
-    setNewChannel({ name: '', description: '', price: 9 });
-    setCurrentView('channels');
-    toast.success(`Channel "${ch.name}" created. Now add your shows.`);
+    try {
+      const res = await fetch('/api/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(newChannel),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setChannels((prev) => [...prev, data]);
+      setShowChannelModal(false);
+      setNewChannel({ name: '', description: '', price: 9 });
+      setCurrentView('channels');
+      toast.success(`Channel "${data.name}" created — add episodes from your projects`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create channel');
+    }
   }
 
-  function addProjectToChannel(channelId: string, projectId: string) {
-    setChannels(prev => prev.map(ch => 
-      ch.id === channelId && !ch.projectIds.includes(projectId)
-        ? { ...ch, projectIds: [...ch.projectIds, projectId] }
-        : ch
-    ));
-    toast.success("Added to your channel. Subscribers will see it.");
+  async function addProjectToChannel(channelId: string, projectId: string) {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/channels', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ channelId, projectId, action: 'add' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setChannels((prev) => prev.map((ch) => (ch.id === channelId ? data : ch)));
+      toast.success('Episode added to your series');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add episode');
+    }
   }
 
-  function removeFromChannel(channelId: string, projectId: string) {
-    setChannels(prev => prev.map(ch =>
-      ch.id === channelId
-        ? { ...ch, projectIds: ch.projectIds.filter(id => id !== projectId) }
-        : ch
-    ));
+  async function removeFromChannel(channelId: string, projectId: string) {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/channels', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ channelId, projectId, action: 'remove' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setChannels((prev) => prev.map((ch) => (ch.id === channelId ? data : ch)));
+      toast.info('Episode removed from channel');
+    } catch {
+      toast.error('Failed to remove episode');
+    }
+  }
+
+  function openProfile(username: string) {
+    setProfileUsername(username);
+    setCurrentView('profile');
   }
 
   // Simple media asset collector
@@ -1493,12 +1547,12 @@ export default function MovieDirector() {
             <button onClick={() => setCurrentView('feed')} className="btn-ghost px-3 py-1 rounded-full text-sm">Feed</button>
             <button onClick={() => { if (!currentUser) { setShowAuthModal(true); return; } setCurrentView('messages'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">Messages</button>
             <button onClick={() => setCurrentView('social')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Share2 className="w-3.5 h-3.5"/> Social</button>
-            <button onClick={() => setCurrentView('channels')} className="btn-ghost px-3 py-1 rounded-full text-sm">Channels</button>
+            <button onClick={() => { if (!currentUser) { setShowAuthModal(true); return; } setCurrentView('channels'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">Channels</button>
             <button onClick={() => setCurrentView('ideas')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Zap className="w-3.5 h-3.5"/> Idea Lab</button>
             <button onClick={() => setShowNewModal(true)} className="flex items-center gap-1.5 px-4 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm"><Plus className="w-3.5 h-3.5"/> New</button>
             <div className="pl-4 border-l border-white/10 text-xs text-white/50 font-mono">GROK</div>
             {currentUser ? (
-              <button onClick={() => { setCurrentUser(null); setToken(null); localStorage.removeItem('moviedirector_token'); localStorage.removeItem('moviedirector_user'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
+              <button onClick={() => openProfile(currentUser.username)} className="btn-ghost px-3 py-1 rounded-full text-sm">@{currentUser.username}</button>
             ) : (
               <button onClick={() => setShowAuthModal(true)} className="btn-gold text-black px-4 py-1 rounded-full text-sm">Sign up / In</button>
             )}
@@ -1647,18 +1701,54 @@ export default function MovieDirector() {
         </div>
       )}
 
+      {/* USER PROFILE */}
+      {currentView === 'profile' && profileUsername && (
+        <UserProfile
+          username={profileUsername}
+          token={token}
+          currentUserId={currentUser?.id}
+          onBack={() => { setCurrentView('feed'); setProfileUsername(null); }}
+          onOpenFilm={(film) => openFilmDetail(film)}
+          onMessage={(userId, username) => {
+            setSelectedConversation(userId);
+            setChatPartner({ id: userId, username });
+            setCurrentView('messages');
+            if (token) loadMessages(userId, token).then((d) => setMessages(d.messages));
+          }}
+          onAuthRequired={() => setShowAuthModal(true)}
+        />
+      )}
+
       {/* CHANNELS — Private Subscription Channels */}
       {currentView === 'channels' && (
         <div className="max-w-7xl mx-auto px-8 py-12">
           <div className="flex items-end justify-between mb-8">
             <div>
-              <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">SUBSCRIPTION BUSINESS</div>
+              <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">PRODUCTION SERIES</div>
               <div className="text-6xl font-display tracking-[-2.5px]">Your Channels</div>
+              <p className="text-white/60 text-sm mt-2">Serialized sitcoms and films — subscribers get every episode. Share your profile link.</p>
             </div>
             <button onClick={() => setShowChannelModal(true)} className="btn-gold px-8 py-3 rounded-full flex items-center gap-2">
-              <Plus className="w-5 h-5"/> CREATE PRIVATE CHANNEL
+              <Plus className="w-5 h-5"/> NEW SERIES
             </button>
           </div>
+
+          {subscribedChannels.length > 0 && (
+            <div className="mb-10">
+              <div className="uppercase tracking-widest text-xs text-[var(--cyan)] mb-3">CHANNELS YOU SUBSCRIBE TO</div>
+              <div className="grid md:grid-cols-2 gap-4">
+                {subscribedChannels.map((ch: { id: string; name: string; owner?: { username: string }; episodes: { title: string }[] }) => (
+                  <div key={ch.id} className="director-card p-5 rounded-2xl">
+                    <div className="font-display text-xl">{ch.name}</div>
+                    <div className="text-xs text-white/50">by @{ch.owner?.username} • {ch.episodes?.length || 0} episodes</div>
+                    {ch.owner && (
+                      <button onClick={() => openProfile(ch.owner!.username)} className="text-xs text-[var(--gold)] mt-2 hover:underline">View creator profile</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {channels.length === 0 ? (
             <div className="p-16 text-center border border-white/10 rounded-3xl">
@@ -1675,7 +1765,7 @@ export default function MovieDirector() {
                     <div className="flex justify-between">
                       <div>
                         <div className="font-display text-4xl tracking-tight">{ch.name}</div>
-                        <div className="text-white/60 mt-1">${ch.price}/mo • {ch.projectIds.length} shows</div>
+                        <div className="text-white/60 mt-1">${ch.price}/mo • {ch.projectIds.length} episodes • {ch.subscriberCount ?? 0} subscribers</div>
                       </div>
                       <div className="text-right text-xs text-white/50">PRIVATE</div>
                     </div>
@@ -1702,9 +1792,19 @@ export default function MovieDirector() {
                       </div>
                     </div>
 
-                    <div className="mt-6 pt-4 border-t border-white/10 text-xs text-white/50 flex justify-between">
-                      <div>Subscriber mock: 247 • MRR ${Math.round(ch.price * 247)}</div>
-                      <button className="underline">Share private link</button>
+                    <div className="mt-6 pt-4 border-t border-white/10 text-xs text-white/50 flex justify-between items-center">
+                      <div>MRR ${Math.round(ch.price * (ch.subscriberCount ?? 0))} • {ch.subscriberCount ?? 0} subscribers</div>
+                      <button
+                        onClick={() => {
+                          if (!currentUser) return;
+                          const url = `${window.location.origin}/u/${currentUser.username}`;
+                          navigator.clipboard.writeText(url);
+                          toast.success('Profile link copied — share it so viewers can subscribe');
+                        }}
+                        className="underline hover:text-white"
+                      >
+                        Share series link
+                      </button>
                     </div>
                   </div>
                 );
@@ -1712,15 +1812,27 @@ export default function MovieDirector() {
             </div>
           )}
 
-          {/* Simple viewer simulation */}
-          <div className="mt-12">
-            <div className="uppercase tracking-[3px] text-xs text-[var(--cyan)] mb-2">SUBSCRIBER VIEW (DEMO)</div>
-            <div className="director-card p-8 rounded-3xl max-w-lg">
-              <div className="font-semibold mb-1">Welcome to the channel</div>
-              <div className="text-sm text-white/70">You have access to all episodes. The feed is now serialized television.</div>
-              <div className="mt-4 text-[10px] text-white/50">Next: “Everyone will have an episode to be watched.”</div>
+          {currentUser && (
+            <div className="mt-12 director-card p-6 rounded-3xl">
+              <div className="text-sm text-white/70 mb-2">Your public creator page — share this so fans subscribe to your series:</div>
+              <div className="flex gap-2 items-center">
+                <code className="flex-1 text-xs bg-black/50 px-4 py-2 rounded-xl text-[var(--gold)] truncate">
+                  {typeof window !== 'undefined' ? `${window.location.origin}/u/${currentUser.username}` : `/u/${currentUser.username}`}
+                </code>
+                <button
+                  onClick={() => {
+                    const url = `${window.location.origin}/u/${currentUser.username}`;
+                    navigator.clipboard.writeText(url);
+                    toast.success('Profile URL copied');
+                  }}
+                  className="btn-gold px-5 py-2 rounded-xl text-sm text-black shrink-0"
+                >
+                  Copy
+                </button>
+                <button onClick={() => openProfile(currentUser.username)} className="btn-outline px-5 py-2 rounded-xl text-sm shrink-0">Preview</button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -1904,7 +2016,15 @@ export default function MovieDirector() {
                     onClick={() => openFilmDetail(item)}
                     className="director-card p-6 rounded-3xl flex flex-col cursor-pointer hover:border-[var(--gold)]/40 transition-colors"
                   >
-                    <div className="text-xs text-white/50 mb-1">{new Date(item.publishedAt).toLocaleDateString()} • by @{item.creator || item.creatorUsername}</div>
+                    <div className="text-xs text-white/50 mb-1">
+                      {new Date(item.publishedAt).toLocaleDateString()} • by{' '}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openProfile(item.creator || item.creatorUsername); }}
+                        className="text-[var(--gold)] hover:underline"
+                      >
+                        @{item.creator || item.creatorUsername}
+                      </button>
+                    </div>
                     <div className="font-display text-3xl tracking-tight mb-2">{item.title}</div>
                     <p className="text-white/70 line-clamp-3 mb-3 flex-1">{item.logline}</p>
                     <div className="mb-3" onClick={(e) => e.stopPropagation()}>
@@ -2684,6 +2804,10 @@ export default function MovieDirector() {
           if (userProjects?.length) setProjects(userProjects);
           const feedData = await loadFeed();
           if (feedData?.items?.length) setFeed(feedData.items);
+          const chs = await loadChannels(data.token);
+          if (chs.length) setChannels(chs);
+          const subs = await loadSubscriptions(data.token);
+          setSubscribedChannels(subs);
           toast.success(`Welcome @${data.user.username}`);
         }}
       />
