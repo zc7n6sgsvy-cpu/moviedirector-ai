@@ -18,6 +18,7 @@ import TrialOfferModal from '@/components/TrialOfferModal';
 import ProductTour from '@/components/ProductTour';
 import EnsembleStudio from '@/components/EnsembleStudio';
 import ConceptLaboratory from '@/components/ConceptLaboratory';
+import MarketingStudio from '@/components/MarketingStudio';
 import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
 import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
@@ -188,7 +189,7 @@ export default function MovieDirector() {
   }>>([]);
   const [subscribedChannels, setSubscribedChannels] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'timeline' | 'publish' | 'api'>('treatment');
+  const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'ads' | 'timeline' | 'publish' | 'api'>('treatment');
 
   // Channels modal / state
   const [showChannelModal, setShowChannelModal] = useState(false);
@@ -692,6 +693,8 @@ export default function MovieDirector() {
           worldBible: project.worldBible,
           continuity: project.continuity,
           generationSettings: project.generationSettings,
+          brandKit: project.brandKit,
+          adFormatId: project.adFormatId,
         }),
       });
       if (!res.ok) {
@@ -3274,7 +3277,7 @@ Alternative: Set up Render worker for one-click server-side render.
             {/* Workspace tabs */}
             <div className="border-t border-white/10">
               <div className="max-w-7xl mx-auto px-8 flex gap-8 text-sm uppercase tracking-[1.5px] overflow-x-auto">
-                {(['treatment', 'storyboard', 'clips', 'cast', 'voice', 'timeline', 'publish', 'api'] as const).map((tab) => (
+                {(['treatment', 'storyboard', 'clips', 'cast', 'voice', 'ads', 'timeline', 'publish', 'api'] as const).map((tab) => (
                   <button 
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -3287,6 +3290,7 @@ Alternative: Set up Render worker for one-click server-side render.
                     {tab === 'clips' && 'GENERATE'}
                     {tab === 'cast' && 'ENSEMBLE'}
                     {tab === 'voice' && 'VOICE'}
+                    {tab === 'ads' && 'ADS'}
                     {tab === 'timeline' && 'ASSEMBLE'}
                     {tab === 'publish' && 'LAUNCH'}
                     {tab === 'api' && 'API'}
@@ -3804,6 +3808,17 @@ Alternative: Set up Render worker for one-click server-side render.
                   </div>
                 )}
               </div>
+            )}
+
+            {/* MARKETING STUDIO — short-form / ads / brand */}
+            {activeTab === 'ads' && (
+              <MarketingStudio
+                project={selectedProject}
+                onUpdate={updateProject}
+                onGoStoryboard={() => setActiveTab('storyboard')}
+                onGoClips={() => setActiveTab('clips')}
+                onGoLab={() => setActiveTab('treatment')}
+              />
             )}
 
             {/* VOICEOVERS — browser preview + xAI TTS studio voices */}

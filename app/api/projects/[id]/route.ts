@@ -18,6 +18,8 @@ const ALLOWED_FIELDS = [
   'worldBible',
   'continuity',
   'generationSettings',
+  'brandKit',
+  'adFormatId',
   'isPublic',
   'isFirstCut',
   'firstCutPath',

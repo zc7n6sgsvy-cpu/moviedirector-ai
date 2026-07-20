@@ -21,6 +21,8 @@ const ALLOWED_CREATE_FIELDS = [
   'worldBible',
   'continuity',
   'generationSettings',
+  'brandKit',
+  'adFormatId',
   'isFirstCut',
   'firstCutPath',
 ] as const;

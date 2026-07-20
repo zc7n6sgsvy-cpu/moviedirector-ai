@@ -19,6 +19,8 @@ export interface IProject extends Document {
   continuity?: Record<string, unknown>;
   /** Concept Lab: master prompts + default quality */
   generationSettings?: Record<string, unknown>;
+  brandKit?: Record<string, unknown>;
+  adFormatId?: string;
   isPublic?: boolean;
   isFirstCut?: boolean;
   firstCutPath?: string;
@@ -42,6 +44,8 @@ const ProjectSchema: Schema = new Schema(
     worldBible: Schema.Types.Mixed,
     continuity: Schema.Types.Mixed,
     generationSettings: Schema.Types.Mixed,
+    brandKit: Schema.Types.Mixed,
+    adFormatId: String,
     isPublic: { type: Boolean, default: false },
     isFirstCut: { type: Boolean, default: false, index: true },
     firstCutPath: { type: String },

@@ -172,6 +172,21 @@ export interface Project {
   continuity?: ContinuityNotes;
   /** Master prompt control + default quality (Concept Lab) */
   generationSettings?: GenerationSettings;
+  /** Marketing Studio brand kit (short-form / ads) */
+  brandKit?: {
+    brandName?: string;
+    product?: string;
+    audience?: string;
+    offer?: string;
+    cta?: string;
+    tone?: string;
+    visualLaws?: string;
+    never?: string;
+    competitorsAvoid?: string;
+    urlOrHandle?: string;
+  };
+  /** Active ad format id from Marketing Studio */
+  adFormatId?: string;
   isFirstCut?: boolean;
   firstCutPath?: string;
   createdAt: string;
