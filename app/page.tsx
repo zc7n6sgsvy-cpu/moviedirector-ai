@@ -718,10 +718,15 @@ export default function MovieDirector() {
       toast.error("Give it a title and a logline. Directors don't wing it.");
       return;
     }
+    if (!token) {
+      toast.error('Sign in to create a cloud project (required for generate + publish)');
+      setShowAuthModal(true);
+      return;
+    }
 
     const treatment = DEFAULT_TREATMENTS[newProject.type](
-      newProject.title.trim(), 
-      newProject.logline.trim(), 
+      newProject.title.trim(),
+      newProject.logline.trim(),
       newProject.berserker
     );
 
@@ -737,40 +742,42 @@ export default function MovieDirector() {
       characters: [],
     };
 
-    let project: Project;
-    if (token) {
-      // Save to DB
+    toast.loading('Saving project to the cloud…', { id: 'create-project' });
+    try {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(projectData),
       });
-      if (res.ok) {
-        project = normalizeProject(await res.json());
-      } else {
-        project = { id: generateId(), ...projectData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Project;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          (data as { error?: string }).error ||
+            'Could not save project. Check MongoDB connection and try again.'
+        );
       }
-    } else {
-      project = { id: generateId(), ...projectData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Project;
+
+      const project = normalizeProject(data as Record<string, unknown>);
+      if (!isValidObjectId(project.id)) {
+        throw new Error('Server returned an invalid project id. Try again.');
+      }
+
+      setProjects((prev) => [project, ...prev.filter((p) => !String(p.id).startsWith('demo-'))]);
+      setSelectedProjectId(project.id);
+      setCurrentView('workspace');
+      setActiveTab('storyboard');
+      setShowNewModal(false);
+      setNewProject({ title: '', type: 'film', concept: '', logline: '', styleHint: '', berserker: false });
+
+      toast.success(`${project.title} is in pre-production.`, {
+        id: 'create-project',
+        description: newProject.berserker
+          ? 'BERSERKER engaged. Generate frames, then publish to the Feed.'
+          : 'Generate frames/clips, then Publish tab → public Feed.',
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Create project failed', { id: 'create-project' });
     }
-
-    setProjects(prev => [project, ...prev]);
-    setSelectedProjectId(project.id);
-    setCurrentView('workspace');
-    setActiveTab('treatment');
-    setShowNewModal(false);
-
-    // Reset form
-    setNewProject({ title: '', type: 'film', concept: '', logline: '', styleHint: '', berserker: false });
-
-    toast.success(`${project.title} is in pre-production. Let's direct.`, {
-      description: newProject.berserker ? "BERSERKER MODE ENGAGED — No creative limits." : "Next: Generate your first frames in the Clips tab."
-    });
-
-    // Guide new directors
-    setTimeout(() => {
-      if (activeTab !== 'treatment') setActiveTab('treatment');
-    }, 600);
   }
 
   function openProject(project: Project) {
@@ -940,6 +947,14 @@ export default function MovieDirector() {
     if (!token) {
       toast.error('Sign in to generate frames with Grok Imagine');
       setShowAuthModal(true);
+      return;
+    }
+
+    if (!isValidObjectId(selectedProject.id)) {
+      toast.error('Invalid project — not saved to the cloud', {
+        description: 'Click New while signed in and create a fresh project. Demo/local IDs cannot generate or publish.',
+      });
+      setShowNewModal(true);
       return;
     }
 
@@ -1646,29 +1661,77 @@ Alternative: Set up Render worker for one-click server-side render.
       return;
     }
 
+    if (!isValidObjectId(selectedProject.id)) {
+      toast.error('Save this project to the cloud first', {
+        description: 'Create the project while signed in, or open it from The Vault after it saves. Local/demo IDs cannot publish.',
+      });
+      return;
+    }
+
+    const hasMedia = selectedProject.shots.some((s) => s.videoUrl || s.imageUrl);
+    if (!hasMedia) {
+      toast.error('Generate at least one frame or video clip first', {
+        description: 'Go to Storyboard / Clips, generate media, then publish so the feed has something to play.',
+      });
+      setActiveTab('clips');
+      return;
+    }
+
+    toast.loading('Publishing to the public feed…', { id: 'publish-feed' });
     try {
+      // Force-save latest shots before publish
+      const saveRes = await fetch(`/api/projects/${selectedProject.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: selectedProject.title,
+          type: selectedProject.type,
+          logline: selectedProject.logline,
+          concept: selectedProject.concept,
+          synopsis: selectedProject.synopsis,
+          style: selectedProject.style,
+          berserker: selectedProject.berserker,
+          shots: selectedProject.shots,
+          characters: selectedProject.characters,
+          isPublic: true,
+        }),
+      });
+      if (!saveRes.ok) {
+        const err = await saveRes.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || 'Could not save project before publish');
+      }
+
       const res = await fetch('/api/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ projectId: selectedProject.id }),
+        body: JSON.stringify({
+          projectId: selectedProject.id,
+          shots: selectedProject.shots,
+        }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Publish failed');
 
       const item = data.feedItem;
-      setFeed(prev => [item, ...prev.filter((f: { projectId?: string }) => f.projectId !== selectedProject.id)]);
+      // Reload feed from server so everyone sees the same list
+      const fresh = await loadFeed();
+      if (fresh?.items?.length) {
+        setFeed(fresh.items);
+        setFeedCursor(fresh.nextCursor);
+        setFeedHasMore(!!fresh.hasMore);
+      } else if (item) {
+        setFeed((prev) => [item, ...prev.filter((f: { id?: string }) => f.id !== item.id)]);
+      }
+
       toast.success(`"${selectedProject.title}" is live on the Feed!`, {
-        description: "Share your profile or add to a Channel to start building subscribers."
+        id: 'publish-feed',
+        description: data.hasVideo
+          ? 'Preview video is on the feed card.'
+          : 'Preview still is on the feed (add video clips for full playback).',
       });
       setCurrentView('feed');
-      setTimeout(() => {
-        // Encourage distribution
-        if (confirm('Open Social Studio to prepare platform drops?')) {
-          setCurrentView('social');
-        }
-      }, 1800);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Publish failed');
+      toast.error(err instanceof Error ? err.message : 'Publish failed', { id: 'publish-feed' });
     }
   }
 
@@ -2455,41 +2518,99 @@ Alternative: Set up Render worker for one-click server-side render.
           )}
 
           {feed.length === 0 ? (
-            <div className="text-center py-20 border border-white/10 rounded-3xl">
-              <p className="text-white/60">No films in the feed yet. Publish from your project's Publish tab to share with everyone.</p>
+            <div className="text-center py-20 border border-white/10 rounded-3xl px-6">
+              <p className="text-white/60 mb-2">No films in the feed yet.</p>
+              <p className="text-sm text-white/40 mb-6 max-w-md mx-auto">
+                Path: create a cloud project → generate at least one frame or clip → workspace{' '}
+                <strong className="text-white/60">LAUNCH</strong> tab →{' '}
+                <strong className="text-white/60">Publish to Main Public Feed</strong>.
+              </p>
+              {currentUser ? (
+                <button
+                  onClick={() => setShowNewModal(true)}
+                  className="btn-gold px-8 py-2 rounded-full text-sm text-black"
+                >
+                  New production
+                </button>
+              ) : (
+                <button onClick={() => setShowAuthModal(true)} className="btn-gold px-8 py-2 rounded-full text-sm text-black">
+                  Sign in to publish
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {feed.map((item: any) => {
-                const proj = projects.find(p => p.id === item.projectId);
+                const preview = item.previewClip as string | undefined;
+                const isVideo =
+                  !!preview &&
+                  (/\.(mp4|webm|mov)(\?|$)/i.test(preview) ||
+                    preview.includes('/clips/') ||
+                    preview.includes('video'));
                 return (
                   <div
                     key={item.id}
                     onClick={() => openFilmDetail(item)}
-                    className="director-card p-6 rounded-3xl flex flex-col cursor-pointer hover:border-[var(--gold)]/40 transition-colors"
+                    className="director-card rounded-3xl flex flex-col cursor-pointer hover:border-[var(--gold)]/40 transition-colors overflow-hidden"
                   >
-                    <div className="text-xs text-white/50 mb-1">
-                      {new Date(item.publishedAt).toLocaleDateString()} • by{' '}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openProfile(item.creator || item.creatorUsername); }}
-                        className="text-[var(--gold)] hover:underline"
-                      >
-                        @{item.creator || item.creatorUsername}
-                      </button>
+                    <div className="aspect-video bg-black relative">
+                      {preview ? (
+                        isVideo ? (
+                          <video
+                            src={preview}
+                            className="w-full h-full object-cover"
+                            muted
+                            playsInline
+                            preload="metadata"
+                            onMouseEnter={(e) => { e.currentTarget.play().catch(() => {}); }}
+                            onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
+                          />
+                        ) : (
+                          <img src={preview} alt={item.title} className="w-full h-full object-cover" />
+                        )
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-white/30 text-xs">
+                          No preview
+                        </div>
+                      )}
+                      {isVideo && (
+                        <div className="absolute bottom-2 right-2 text-[10px] px-2 py-0.5 rounded bg-black/70 text-white/80">
+                          VIDEO
+                        </div>
+                      )}
                     </div>
-                    <div className="font-display text-3xl tracking-tight mb-2">{item.title}</div>
-                    <p className="text-white/70 line-clamp-3 mb-3 flex-1">{item.logline}</p>
-                    <div className="mb-3" onClick={(e) => e.stopPropagation()}>
-                      <StarRating value={item.ratingAvg || 0} readonly size="sm" />
-                      <span className="text-[10px] text-white/40 ml-1">
-                        {item.commentCount ? `${item.commentCount} comments` : 'Discuss'}
-                      </span>
-                    </div>
-                    <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => openFilmDetail(item)} className="btn-gold flex-1 py-2 rounded-2xl text-sm text-black">Watch & Discuss</button>
-                      <button onClick={() => toggleLike(item.id)} className="btn-outline px-4 rounded-2xl text-sm">
-                        {likedFeedIds.has(item.id) ? '♥' : '♡'} {item.likeCount || ''}
-                      </button>
+                    <div className="p-5 flex flex-col flex-1">
+                      <div className="text-xs text-white/50 mb-1">
+                        {item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : ''} • by{' '}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openProfile(item.creator || item.creatorUsername);
+                          }}
+                          className="text-[var(--gold)] hover:underline"
+                        >
+                          @{item.creator || item.creatorUsername}
+                        </button>
+                      </div>
+                      <div className="font-display text-2xl tracking-tight mb-2">{item.title}</div>
+                      <p className="text-white/70 line-clamp-2 mb-3 flex-1 text-sm">{item.logline}</p>
+                      <div className="mb-3" onClick={(e) => e.stopPropagation()}>
+                        <StarRating value={item.ratingAvg || 0} readonly size="sm" />
+                        <span className="text-[10px] text-white/40 ml-1">
+                          {item.commentCount ? `${item.commentCount} comments` : 'Discuss'}
+                        </span>
+                      </div>
+                      <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => openFilmDetail(item)}
+                          className="btn-gold flex-1 py-2 rounded-2xl text-sm text-black"
+                        >
+                          Watch & Discuss
+                        </button>
+                        <button onClick={() => toggleLike(item.id)} className="btn-outline px-4 rounded-2xl text-sm">
+                          {likedFeedIds.has(item.id) ? '♥' : '♡'} {item.likeCount || ''}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -3106,14 +3227,30 @@ Alternative: Set up Render worker for one-click server-side render.
                 </div>
 
                 {/* Publish to Main Public Feed for social discovery */}
-                <div className="mt-4 p-4 border border-white/10 rounded-3xl bg-[#0a0a0a]">
-                  <button 
+                <div className="mt-4 p-5 border border-[var(--gold)]/30 rounded-3xl bg-[#0a0a0a]">
+                  <div className="text-xs uppercase tracking-widest text-[var(--gold)] mb-2">PUBLIC FEED</div>
+                  <p className="text-sm text-white/70 mb-3">
+                    Posts this project to Everyone&apos;s Films. Needs a <strong className="text-white/90">cloud-saved</strong> project
+                    and at least one <strong className="text-white/90">generated frame or video</strong>.
+                  </p>
+                  <div className="text-xs text-white/50 mb-4">
+                    Ready: {selectedProject.shots.filter((s) => s.videoUrl).length} videos ·{' '}
+                    {selectedProject.shots.filter((s) => s.imageUrl).length} stills
+                    {!isValidObjectId(selectedProject.id) && (
+                      <span className="block text-red-400 mt-1">
+                        This project ID is local-only — create/save while signed in before publishing.
+                      </span>
+                    )}
+                  </div>
+                  <button
                     onClick={publishToFeed}
                     className="btn-gold w-full py-3 rounded-2xl text-sm text-black"
                   >
-                    Publish to Main Public Feed (for everyone)
+                    Publish to Main Public Feed
                   </button>
-                  <div className="text-[10px] mt-2 text-white/50 text-center">Your film appears in the global Feed — others can rate, discuss, message you, and share your series.</div>
+                  <div className="text-[10px] mt-2 text-white/50 text-center">
+                    Live on the Feed with preview media — rate, discuss, message, share.
+                  </div>
                 </div>
               </div>
             )}

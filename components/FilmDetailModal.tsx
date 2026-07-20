@@ -143,9 +143,22 @@ export default function FilmDetailModal({
         </div>
 
         <div className="p-6 space-y-6">
-          {film.project?.previewClip && (
-            <video src={film.project.previewClip} controls className="w-full rounded-2xl aspect-video bg-black" />
-          )}
+          {(() => {
+            const media = film.project?.previewClip || film.previewClip;
+            if (!media) {
+              return (
+                <div className="aspect-video rounded-2xl bg-black/60 border border-white/10 flex items-center justify-center text-white/40 text-sm">
+                  No preview media yet — stills/clips appear when the creator publishes with generated assets.
+                </div>
+              );
+            }
+            const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(media) || media.includes('video') || media.includes('clips/');
+            return isVideo ? (
+              <video src={media} controls playsInline className="w-full rounded-2xl aspect-video bg-black object-contain" />
+            ) : (
+              <img src={media} alt={film.title} className="w-full rounded-2xl aspect-video object-cover bg-black" />
+            );
+          })()}
 
           <p className="text-white/80 leading-relaxed">{film.logline}</p>
 
