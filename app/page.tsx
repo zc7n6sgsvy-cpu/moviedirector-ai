@@ -29,6 +29,11 @@ import {
   generateCharacterRefPrompt as generateCharacterRefPromptLib,
 } from '@/lib/prompts';
 import { estimateProjectCost } from '@/lib/cost';
+import {
+  mergeProjectsPreferMedia,
+  extractAssetsFromProjects,
+  type RecoveredAsset,
+} from '@/lib/media-recovery';
 
 const PROJECT_TYPES = SHARED_PROJECT_TYPES;
 
@@ -452,11 +457,49 @@ export default function MovieDirector() {
         const u = JSON.parse(savedUser);
         setCurrentUser(u);
         setToken(savedToken);
-        // Load from DB
+        // Load from DB — merge with localStorage so hard refresh never drops frames/clips
         (async () => {
           try {
+            let localProjects: Project[] = [];
+            try {
+              const raw = localStorage.getItem('moviedirector_projects');
+              if (raw) localProjects = JSON.parse(raw);
+            } catch {}
             const data = await loadUserProjects(savedToken);
-            if (data?.length) setProjects(data);
+            if (data?.length) {
+              const merged = mergeProjectsPreferMedia(data, localProjects);
+              setProjects(merged);
+              // If local still had media the API lost, push it back to Mongo immediately
+              for (const p of merged) {
+                if (!isValidObjectId(p.id)) continue;
+                const api = data.find((d: Project) => d.id === p.id);
+                const localMedia = (p.shots || []).filter((s: Shot) => s.imageUrl || s.videoUrl).length;
+                const apiMedia = (api?.shots || []).filter((s: Shot) => s.imageUrl || s.videoUrl).length;
+                if (localMedia > apiMedia) {
+                  fetch(`/api/projects/${p.id}`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${savedToken}`,
+                    },
+                    body: JSON.stringify({
+                      shots: p.shots,
+                      characters: p.characters,
+                      script: p.script,
+                      worldBible: p.worldBible,
+                      continuity: p.continuity,
+                      generationSettings: p.generationSettings,
+                      concept: p.concept,
+                      synopsis: p.synopsis,
+                      style: p.style,
+                    }),
+                  }).catch(() => {});
+                }
+              }
+            } else if (localProjects.length) {
+              // API empty but local still has work (incl. media) — keep it
+              setProjects(localProjects);
+            }
           } catch {}
           try {
             const feedData = await loadFeed();
@@ -612,40 +655,100 @@ export default function MovieDirector() {
 
   const selectedProject = projects.find(p => p.id === selectedProjectId);
 
+  /** Immediate cloud save — used after generation so hard refresh cannot drop media. */
+  async function forceSaveProject(project: Project): Promise<boolean> {
+    if (!token || !project?.id || !isValidObjectId(project.id)) return false;
+    setSaveStatus('saving');
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: project.title,
+          type: project.type,
+          logline: project.logline,
+          concept: project.concept,
+          synopsis: project.synopsis,
+          style: project.style,
+          berserker: project.berserker,
+          shots: project.shots,
+          characters: project.characters,
+          script: project.script,
+          worldBible: project.worldBible,
+          continuity: project.continuity,
+          generationSettings: project.generationSettings,
+        }),
+      });
+      if (!res.ok) {
+        setSaveStatus('error');
+        return false;
+      }
+      setSaveStatus('idle');
+      // Mirror media into a durable local vault (survives API overwrite races)
+      try {
+        const vaultKey = 'moviedirector_media_vault';
+        const prev: RecoveredAsset[] = JSON.parse(localStorage.getItem(vaultKey) || '[]');
+        const next = extractAssetsFromProjects([project], 'local');
+        const map = new Map<string, RecoveredAsset>();
+        for (const a of [...prev, ...next]) {
+          const k = `${a.videoUrl || ''}|${a.imageUrl || ''}`;
+          if (k !== '|') map.set(k, a);
+        }
+        localStorage.setItem(vaultKey, JSON.stringify([...map.values()].slice(-200)));
+      } catch {}
+      return true;
+    } catch {
+      setSaveStatus('error');
+      return false;
+    }
+  }
+
+  async function recoverLostMedia() {
+    if (!token) {
+      toast.error('Sign in to recover media into a cloud project');
+      setShowAuthModal(true);
+      return;
+    }
+    toast.loading('Scanning projects, jobs, blob store, and local vault…', { id: 'recover-media' });
+    try {
+      let localAssets: RecoveredAsset[] = [];
+      try {
+        const vault = JSON.parse(localStorage.getItem('moviedirector_media_vault') || '[]');
+        const fromProjects = extractAssetsFromProjects(projects, 'local');
+        localAssets = [...vault, ...fromProjects];
+      } catch {}
+      const res = await fetch('/api/projects/recover-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ localAssets }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Recovery failed');
+      if (!data.project || !data.recovered) {
+        toast.message(data.message || 'Nothing to recover', { id: 'recover-media' });
+        return;
+      }
+      const recovered = normalizeProject(data.project as Record<string, unknown>);
+      setProjects((prev) => [recovered, ...prev.filter((p) => p.id !== recovered.id)]);
+      setSelectedProjectId(recovered.id);
+      setCurrentView('workspace');
+      setActiveTab('clips');
+      toast.success(data.message || `Recovered ${data.recovered} assets`, {
+        id: 'recover-media',
+        description: data.sources
+          ? `local ${data.sources.local} · projects ${data.sources.project} · jobs ${data.sources.job} · blob ${data.sources.blob}`
+          : undefined,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Recovery failed', { id: 'recover-media' });
+    }
+  }
+
   // Auto-save project edits to MongoDB
   useEffect(() => {
     if (!token || !selectedProject?.id || !isValidObjectId(selectedProject.id)) return;
     const timeout = setTimeout(async () => {
-      setSaveStatus('saving');
-      try {
-        const res = await fetch(`/api/projects/${selectedProject.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({
-            title: selectedProject.title,
-            type: selectedProject.type,
-            logline: selectedProject.logline,
-            concept: selectedProject.concept,
-            synopsis: selectedProject.synopsis,
-            style: selectedProject.style,
-            berserker: selectedProject.berserker,
-            shots: selectedProject.shots,
-            characters: selectedProject.characters,
-            script: selectedProject.script,
-            worldBible: selectedProject.worldBible,
-            continuity: selectedProject.continuity,
-          }),
-        });
-        if (!res.ok) {
-          setSaveStatus('error');
-          toast.error('Failed to save project — check your connection');
-          return;
-        }
-        setSaveStatus('idle');
-      } catch {
-        setSaveStatus('error');
-        toast.error('Failed to save project — check your connection');
-      }
+      await forceSaveProject(selectedProject);
     }, 1200);
     return () => clearTimeout(timeout);
   }, [selectedProject, token]);
@@ -978,7 +1081,12 @@ export default function MovieDirector() {
         }
         throw new Error(data.error || 'Image generation failed');
       }
+      const nextShots = selectedProject.shots.map((s) =>
+        s.id === shotId ? { ...s, imageUrl: data.imageUrl as string } : s
+      );
       updateShot(shotId, { imageUrl: data.imageUrl });
+      // Persist immediately — don't rely on debounced autosave surviving a hard refresh
+      void forceSaveProject({ ...selectedProject, shots: nextShots });
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
       if (data.firstCut) {
         setFirstCutFree({
@@ -1072,7 +1180,11 @@ export default function MovieDirector() {
         }
         throw new Error(data.error || 'Video generation failed');
       }
+      const nextShots = selectedProject.shots.map((s) =>
+        s.id === shotId ? { ...s, videoUrl: data.videoUrl as string } : s
+      );
       updateShot(shotId, { videoUrl: data.videoUrl });
+      void forceSaveProject({ ...selectedProject, shots: nextShots });
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
       if (data.firstCut) {
         setFirstCutFree({
@@ -2157,17 +2269,27 @@ Alternative: Set up Render worker for one-click server-side render.
               </div>
             </div>
           </div>
-          <div className="flex items-end justify-between mb-8">
+          <div className="flex items-end justify-between mb-8 flex-wrap gap-4">
             <div>
               <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">THE VAULT</div>
               <div className="text-6xl font-display tracking-[-2.5px]">Your Projects</div>
             </div>
-            <button 
-              onClick={() => setShowNewModal(true)} 
-              className="btn-gold flex items-center gap-3 px-8 py-3 rounded-full text-base"
-            >
-              <Plus className="w-5 h-5"/> NEW PRODUCTION
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={recoverLostMedia}
+                className="btn-outline flex items-center gap-2 px-5 py-3 rounded-full text-sm"
+                title="Rebuild a project from any frames/clips still in Blob, jobs, or local vault"
+              >
+                Recover lost clips
+              </button>
+              <button
+                onClick={() => setShowNewModal(true)}
+                className="btn-gold flex items-center gap-3 px-8 py-3 rounded-full text-base"
+              >
+                <Plus className="w-5 h-5" /> NEW PRODUCTION
+              </button>
+            </div>
           </div>
 
           {projects.length === 0 ? (
