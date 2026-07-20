@@ -1337,7 +1337,7 @@ export default function MovieDirector() {
     updateVoiceover(shotId, suggested);
     navigator.clipboard.writeText(prompt);
     toast.success("Voiceover script + prompt ready", { 
-      description: "Speak button uses your browser voice for demo. For studio grade, paste prompt to Grok audio or TTS provider." 
+      description: "Browser voice is a quick preview. Studio VO audio will stay inside MovieDirector as we expand TTS." 
     });
   }
 
@@ -2434,16 +2434,33 @@ Alternative: Set up Render worker for one-click server-side render.
                     </div>
                     <div className="text-xs px-3 py-1 border border-white/20 rounded">{p.desc}</div>
                   </div>
-                  <div className="mt-6 text-sm text-white/70">Generate a vertical or horizontal cut using your existing shots + Grok video. Perfect hook length for the algorithm.</div>
-                  <button onClick={() => {
-                    const demoProj = projects[0];
-                    if (demoProj) {
-                      const cuts = generateSocialCuts(demoProj);
-                      const prompt = `Create a ${p.label} optimized version: ${cuts[0].prompt} Use the assets from "${demoProj.title}".`;
-                      navigator.clipboard.writeText(prompt);
-                      toast.success(`Prompt for ${p.label} copied`, { description: "Paste to me and I'll generate the exact social cut with Grok." });
-                    }
-                  }} className="mt-4 btn-gold text-black px-5 py-1.5 text-sm rounded-2xl">GENERATE {p.label.toUpperCase()} CUT</button>
+                  <div className="mt-6 text-sm text-white/70">
+                    Vertical/social cuts are made <strong className="text-white/90">inside MovieDirector</strong> with the same Grok engine — never leave the site.
+                  </div>
+                  <button
+                    onClick={() => {
+                      const proj = projects.find((pr) => isValidObjectId(pr.id)) || projects[0];
+                      if (!proj) {
+                        toast.error('Create a project first');
+                        setShowNewModal(true);
+                        return;
+                      }
+                      if (!token || !isValidObjectId(proj.id)) {
+                        toast.error('Open a cloud-saved project, then generate the cut in Clips');
+                        setShowNewModal(true);
+                        return;
+                      }
+                      setSelectedProjectId(proj.id);
+                      setCurrentView('workspace');
+                      setActiveTab('clips');
+                      toast.success(`${p.label} cut — generate in MovieDirector`, {
+                        description: `9:16 / short-hook energy. Use GENERATE FRAME then GENERATE VIDEO on your best shot. Everything runs on MD (Grok API under the hood).`,
+                      });
+                    }}
+                    className="mt-4 btn-gold text-black px-5 py-1.5 text-sm rounded-2xl"
+                  >
+                    GENERATE {p.label.toUpperCase()} CUT ON MD
+                  </button>
                 </div>
               ))}
             </div>
@@ -2474,8 +2491,24 @@ Alternative: Set up Render worker for one-click server-side render.
 
                   <div>
                     <div className="uppercase text-xs tracking-widest mb-2 text-white/50">THUMBNAIL PROMPTS</div>
-                    <button onClick={() => { const p = generateThumbnailPrompt(projects[0]); navigator.clipboard.writeText(p); toast("Thumbnail prompt copied — ask me to generate it."); }} 
-                            className="btn-outline w-full mb-4 py-3 text-left px-5 rounded-2xl">Generate scroll-stopping thumbnail for this film</button>
+                    <button
+                      onClick={() => {
+                        const proj = projects[0];
+                        if (!proj || !token || !isValidObjectId(proj.id)) {
+                          toast.error('Need a cloud-saved project to generate thumbnails on MD');
+                          return;
+                        }
+                        setSelectedProjectId(proj.id);
+                        setCurrentView('workspace');
+                        setActiveTab('clips');
+                        toast.success('Thumbnail = Generate Frame on MD', {
+                          description: 'Use GENERATE FRAME on a key shot. No external Grok site required.',
+                        });
+                      }}
+                      className="btn-outline w-full mb-4 py-3 text-left px-5 rounded-2xl"
+                    >
+                      Generate scroll-stopping thumbnail on MD
+                    </button>
 
                     <div className="uppercase text-xs tracking-widest mb-2 text-white/50">ONE-CLICK ACTIONS</div>
                     <div className="flex flex-wrap gap-3">
