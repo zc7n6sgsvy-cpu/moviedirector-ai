@@ -73,8 +73,8 @@ export async function POST(request: NextRequest) {
       planStatus: 'active',
       creditBalance: 0,
       firstCutStatus: 'not_started',
-      firstCutFreeImagesRemaining: 3,
-      firstCutFreeVideosRemaining: 2,
+      firstCutFreeImagesRemaining: 5,
+      firstCutFreeVideosRemaining: 3,
       hasUsedTrial: false,
       onboardingStep: 'first_cut',
     });

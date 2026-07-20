@@ -74,5 +74,8 @@ export function costExplainer() {
       headline: 'X Premium = infinite random prompts. MovieDirector = a film studio.',
       body: 'On X you doodle forever. Here you build a project with cast, script, continuity, and a publish path. Planning is free. You only pay when pixels burn — and drafts + half-price retakes keep testing sane.',
     },
+    /** Avoid sticker shock — lead with draft + plan value */
+    newcomerPitch:
+      'Plan free → test in DRAFT (a few credits) → FINAL when it feels right. Creator includes ~40 final 8s clips a month — enough for a cold open, not two lonely clips.',
   };
 }

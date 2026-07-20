@@ -217,7 +217,7 @@ export default function FirstCutWalkthrough({
               </button>
             </div>
             <p className="text-[11px] text-white/35 mt-4">
-              Includes 3 free frames + 2 free Grok video clips. Pre-production (shots, cast, style)
+              Includes 5 free frames + 3 free Grok video clips. Pre-production (shots, cast, style)
               stays free forever.
             </p>
           </div>

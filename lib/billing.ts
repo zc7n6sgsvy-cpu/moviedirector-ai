@@ -461,9 +461,13 @@ export async function getBillingSnapshot(userId: string) {
       videoCreditsPerSecond: videoCreditsFor(1, 'final', false),
       videoDraftPerSecond: videoCreditsFor(1, 'draft', false),
       video8s: videoCreditsFor(8, 'final', false),
+      video8sRetake: videoCreditsFor(8, 'final', true),
       video5sDraft: videoCreditsFor(5, 'draft', false),
+      video5sDraftRetake: videoCreditsFor(5, 'draft', true),
       retakeNote: 'Regenerating a shot that already has a frame/clip costs 50%.',
       freePlanning: true,
+      newcomerHint:
+        'Stay on DRAFT while exploring. Final 8s is intentional — plan free first so every credit lands.',
     },
     recentUsage: recent.map((e) => ({
       id: e._id.toString(),

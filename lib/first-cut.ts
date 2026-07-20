@@ -19,15 +19,16 @@ export type FirstCutPathId =
 export type FirstCutStatus = 'not_started' | 'in_progress' | 'completed' | 'skipped';
 
 /** Free generation budget for the First Cut sample (platform-sponsored). */
-export const FIRST_CUT_FREE_IMAGES = 3;
-export const FIRST_CUT_FREE_VIDEOS = 2;
+export const FIRST_CUT_FREE_IMAGES = 5;
+export const FIRST_CUT_FREE_VIDEOS = 3;
 /** Short clips keep COGS predictable while still feeling cinematic. */
 export const FIRST_CUT_VIDEO_SECONDS = 6;
 
 /** Platform trial after First Cut (or skip). */
 export const TRIAL_DAYS = 7;
 export const TRIAL_PLAN: 'creator' = 'creator';
-export const TRIAL_CREDITS = 500;
+/** Enough to finish a cold open with drafts — not six lonely clips. */
+export const TRIAL_CREDITS = 1000;
 
 export interface FirstCutPath {
   id: FirstCutPathId;
@@ -321,5 +322,5 @@ export const FIRST_CUT_JOURNEY_COPY = {
   afterSample:
     'Your sample is ready. Start a 7-day free trial to unlock full episodes, batch generation, and monthly credits.',
   trialPitch:
-    '7 days of Creator free. 500 credits. Cancel before day 8 and you pay nothing if you cancel during trial (Stripe trial).',
+    '7 days of Creator free. 1,000 credits — enough for a cold open with drafts. Cancel before day 8 and you pay nothing if you cancel during trial (Stripe trial).',
 };

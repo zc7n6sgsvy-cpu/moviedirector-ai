@@ -49,7 +49,7 @@ export const PRODUCT_TOUR_STEPS: TourStep[] = [
     id: 'landing-first-cut',
     chapter: 'Free funnel',
     title: 'Free First Cut CTA',
-    body: 'Primary conversion: "Create your free First Cut" — no card. Walkthrough paths: sitcom pilot, short film, brand commercial, or launch trailer. Users get 3 free frames + 2 free video clips as a real sample asset.',
+    body: 'Primary conversion: "Create your free First Cut" — no card. Walkthrough paths: sitcom pilot, short film, brand commercial, or launch trailer. Users get 5 free frames + 3 free video clips as a real sample asset, then a trial with real volume.',
     view: 'landing',
     navHint: 'Landing hero',
   },

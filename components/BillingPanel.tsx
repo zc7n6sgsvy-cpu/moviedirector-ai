@@ -33,7 +33,16 @@ type BillingAccount = {
   priceMonthlyUsd: number;
   paymentsReady: boolean;
   hasStripeCustomer: boolean;
-  costs: { imageCredits: number; videoCreditsPerSecond: number; video8s: number };
+  costs: {
+    imageCredits: number;
+    imageDraft?: number;
+    videoCreditsPerSecond: number;
+    videoDraftPerSecond?: number;
+    video8s: number;
+    video5sDraft?: number;
+    video8sRetake?: number;
+    newcomerHint?: string;
+  };
   firstCut?: {
     status: string;
     freeImagesRemaining: number;
@@ -205,7 +214,7 @@ export default function BillingPanel({
             <div className="text-xs tracking-widest text-[var(--gold)] mb-1">FREE PATH</div>
             <div className="font-display text-2xl">Start your First Cut sample</div>
             <p className="text-sm text-white/60 mt-1">
-              Sitcom pilot, short film, commercial, or launch trailer — 3 free frames + 2 free clips. No card.
+              Sitcom pilot, short film, commercial, or launch trailer — 5 free frames + 3 free clips. No card.
             </p>
           </div>
           <button onClick={onStartFirstCut} className="btn-gold px-6 py-2.5 rounded-2xl text-black text-sm">
@@ -217,7 +226,7 @@ export default function BillingPanel({
         <div className="mb-6 p-5 rounded-3xl border border-[var(--gold)]/40 bg-[var(--gold)]/5 flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="text-xs tracking-widest text-[var(--gold)] mb-1">FREE TRIAL</div>
-            <div className="font-display text-2xl">7 days of Creator · 500 credits</div>
+            <div className="font-display text-2xl">7 days of Creator · 1,000 credits</div>
             <p className="text-sm text-white/60 mt-1">
               Unlock full generation after your sample. No card platform trial, or Stripe trial ($0 today).
             </p>
@@ -272,14 +281,27 @@ export default function BillingPanel({
               <div className="font-mono text-3xl">{account.lifetimeCreditsUsed}</div>
             </div>
             <div>
-              <div className="text-xs text-white/50">USAGE RATES</div>
-              <div className="text-sm text-white/70 mt-1">
-                Image: {account.costs.imageCredits} cr · Video: {account.costs.videoCreditsPerSecond} cr/s
-                <br />
-                8s clip ≈ {account.costs.video8s} credits
+              <div className="text-xs text-white/50">USAGE RATES (don’t panic)</div>
+              <div className="text-sm text-white/70 mt-1 space-y-0.5">
+                <div>
+                  <span className="text-white/40">Draft</span> image {account.costs.imageDraft ?? 1} cr · 5s clip{' '}
+                  {account.costs.video5sDraft ?? 5} cr
+                </div>
+                <div>
+                  <span className="text-white/40">Final</span> image {account.costs.imageCredits} cr · 8s clip{' '}
+                  {account.costs.video8s} cr ({account.costs.videoCreditsPerSecond} cr/s)
+                </div>
+                <div className="text-white/40 text-xs">
+                  Retakes ½ price · Lab planning always free
+                </div>
               </div>
             </div>
           </div>
+          {account.costs.newcomerHint && (
+            <p className="mt-4 text-xs text-white/50 border border-white/10 rounded-xl px-3 py-2 leading-relaxed">
+              {account.costs.newcomerHint}
+            </p>
+          )}
           {!account.paymentsReady && (
             <div className="mt-4 text-xs text-amber-400/90 border border-amber-400/30 rounded-xl px-3 py-2">
               Stripe not fully configured on this deployment. Plans & packs show correctly; checkout

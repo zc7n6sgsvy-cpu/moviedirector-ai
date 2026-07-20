@@ -3931,8 +3931,8 @@ Alternative: Set up Render worker for one-click server-side render.
                   </div>
                   <div className="flex-1 text-xs text-white/50">
                     Plan free · Draft cheap · Final when locked · Retakes ½ · Bridges plan cuts before burn.
-                    Image draft {imageCreditsFor('draft')} / final {imageCreditsFor('final')} cr ·
-                    Video draft ~{videoCreditsFor(5, 'draft')} cr (5s) · final 8s {videoCreditsFor(8, 'final')} cr.
+                    Draft image {imageCreditsFor('draft')} cr · final {imageCreditsFor('final')} cr ·
+                    Draft 5s ~{videoCreditsFor(5, 'draft')} cr · final 8s {videoCreditsFor(8, 'final')} cr (was 80 — now intentional, not punishing).
                   </div>
                 </div>
 

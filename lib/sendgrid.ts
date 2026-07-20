@@ -77,11 +77,11 @@ export async function sendWelcomeEmail(
   return sendEmail({
     to: email,
     subject: 'Welcome to MovieDirector.ai — your free First Cut is ready',
-    text: `Welcome ${username}!\n\nYou're a Director on MovieDirector.ai.\n\nNo card required. Start your free First Cut walkthrough:\n• Sitcom pilot cold open\n• Short film beats\n• Brand commercial\n• Launch trailer\n\nYou get 3 free frames + 2 free video clips to create a real sample asset.\n\nThen start a 7-day Creator free trial for full episodes + 500 credits.\n\nStart here: ${base}\n\n— The MovieDirector Team`,
+    text: `Welcome ${username}!\n\nYou're a Director on MovieDirector.ai.\n\nNo card required. Start your free First Cut walkthrough:\n• Sitcom pilot cold open\n• Short film beats\n• Brand commercial\n• Launch trailer\n\nYou get 5 free frames + 3 free video clips to create a real sample asset.\n\nThen start a 7-day Creator free trial for full episodes + 1,000 credits.\n\nStart here: ${base}\n\n— The MovieDirector Team`,
     html: `<p>Welcome <strong>${username}</strong>!</p>
       <p><strong>No card required.</strong> Start your free <em>First Cut</em> walkthrough — sitcom pilot, short film, commercial, or launch trailer.</p>
-      <p>You get <strong>3 free frames + 2 free video clips</strong> to create a real sample.</p>
-      <p>Then unlock a <strong>7-day Creator free trial</strong> (500 credits) to finish full projects.</p>
+      <p>You get <strong>5 free frames + 3 free video clips</strong> to create a real sample.</p>
+      <p>Then unlock a <strong>7-day Creator free trial</strong> (1,000 credits) to finish full projects.</p>
       <p><a href="${base}">Create your free First Cut</a></p>`,
   });
 }
