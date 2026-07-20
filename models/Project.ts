@@ -12,6 +12,9 @@ export interface IProject extends Document {
   shots: any[];
   characters?: any[];
   isPublic?: boolean;
+  /** Free guided sample project — generations can use First Cut free allowance. */
+  isFirstCut?: boolean;
+  firstCutPath?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,6 +31,8 @@ const ProjectSchema: Schema = new Schema({
   shots: [Schema.Types.Mixed],
   characters: [Schema.Types.Mixed],
   isPublic: { type: Boolean, default: false },
+  isFirstCut: { type: Boolean, default: false, index: true },
+  firstCutPath: { type: String },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

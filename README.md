@@ -12,22 +12,22 @@ One vision: **Your films are your feed.** Instead of posts, creators publish epi
 
 ## Current State
 
-Fully functional director console (Next.js + MongoDB backend):
+Fully functional director console ready to onboard users once APIs are wired:
 
-- Real user accounts (signup/login with MongoDB + JWT)
+- Real user accounts (signup/login/password reset + JWT)
 - Project creation with rich concept, style template, and detailed shot list
 - Character + Style reference system for consistency
 - Advanced per-shot prompting (emotion, acting, dialogue, camera, sound cues)
-- Generation prompts ready for Grok Imagine (image + video)
+- Grok Imagine image + video generation with credit metering
 - Clip assembly + one-click "Render Full Movie" export package (with manifest + FFmpeg instructions)
 - **Main public Feed** — discover everyone's published films
 - **Messaging system** — DMs between creators
 - Private subscription Channels
 - Social Studio for platform-optimized cuts and personal brand drops
-- Official logo integrated
-- Cinematic dark UI
+- **Monetization:** membership plans (MRR) + usage credits + Stripe Checkout/Portal/Webhooks
+- Launch readiness probe: `GET /api/health` — see `LAUNCH.md`
 
-Stack: Next.js 16 (Vercel) + MongoDB + GitHub (Render for workers if needed)
+Stack: Next.js 16 (Vercel) + MongoDB + Stripe + SendGrid + beehiiv + Upstash + Render (worker fallback)
 
 ## How to Start a Grok Session (from Terminal)
 
@@ -88,22 +88,25 @@ Let's build the future of moving pictures.
 - Designed for Grok Imagine + video generation
 - Deployed on Vercel with GitHub integration
 
-## Next Steps (roadmap)
+## Next Steps (roadmap) — See PRODUCT_VISION.md for full alignment
 
-- Real asset storage + preview of generated mp4s
-- Server render endpoint (Remotion or ffmpeg)
-- Public API + auth
-- "Episode feed" social view
-- Prompt memory + style bible per project
-- Collaborative rooms
+- Prominent batch generation + live job progress UI (improved)
+- Full real stitched MP4 (worker or in-app)
+- Dedicated creator API keys + public docs (first API task underway)
+- Cost & usage dashboard for users
+- Stronger guided first-project onboarding
+- Production thumbnail + feed preview enrichment
+- Channel subscriptions with real payments (beta free for launch)
 
-## Production Setup (MongoDB + Vercel + Render if needed)
+## Production Setup (Vercel + MongoDB + SendGrid + beehiiv + Render fallback)
 
-1. MongoDB Atlas: Create cluster, get connection string.
-2. `cp .env.example .env.local` and set MONGODB_URI, JWT_SECRET.
-3. `npm run dev` (needs local Mongo or Atlas).
-4. On Vercel: Set the same env vars for the project (acquire-investors-projects/moviedirector).
-5. For heavy background (e.g. video queues later): Deploy a worker to Render.com.
+1. MongoDB Atlas.
+2. Vercel project (primary).
+3. SendGrid: Get API key, set FROM email. Add to Vercel env.
+4. beehiiv: API key + publication ID for newsletters/audience.
+5. `cp .env.example .env.local` and configure all keys.
+6. For heavy rendering: Deploy worker to Render.com and set RENDER_* vars (fallback).
+7. Deploy to Vercel. Set env vars including SENDGRID, BEEHIIV, XAI, etc.
 
 Accounts now real via /api/auth/* 
 Main Feed via /api/feed + publish.

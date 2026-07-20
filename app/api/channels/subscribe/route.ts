@@ -4,6 +4,8 @@ import Channel from '@/models/Channel';
 import ChannelSubscription from '@/models/ChannelSubscription';
 import { requireAuth } from '@/lib/auth';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
+import User from '@/models/User';
+import { sendChannelSubscriptionReceipt } from '@/lib/sendgrid';
 
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -30,6 +32,19 @@ export async function POST(req: NextRequest) {
   }
 
   await ChannelSubscription.create({ userId: auth.userId, channelId });
+
+  // Send receipt email (best effort)
+  try {
+    const user = await User.findById(auth.userId);
+    if (user?.email) {
+      sendChannelSubscriptionReceipt(user.email, user.username, channel.name, channel.price || 9).catch(() => {});
+    }
+    // Also try beehiiv
+    if (user?.email) {
+      import('@/lib/beehiiv').then(m => m.subscribeToBeehiiv(user.email!, user.username).catch(() => {}));
+    }
+  } catch {}
+
   const count = await ChannelSubscription.countDocuments({ channelId });
   return NextResponse.json({ subscribed: true, subscriberCount: count });
 }

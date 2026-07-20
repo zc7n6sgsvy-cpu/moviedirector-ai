@@ -11,6 +11,7 @@ export interface IFeedItem extends Document {
   ratingAvg: number;
   ratingCount: number;
   publishedAt: Date;
+  previewClip?: string;
 }
 
 const FeedItemSchema: Schema = new Schema({
@@ -24,6 +25,7 @@ const FeedItemSchema: Schema = new Schema({
   ratingAvg: { type: Number, default: 0 },
   ratingCount: { type: Number, default: 0 },
   publishedAt: { type: Date, default: Date.now },
+  previewClip: String,
 });
 
 FeedItemSchema.index({ publishedAt: -1 });

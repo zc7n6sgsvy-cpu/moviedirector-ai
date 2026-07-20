@@ -4,6 +4,7 @@ import Project from '@/models/Project';
 import { requireAuth } from '@/lib/auth';
 import { serializeDoc } from '@/lib/serialize';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
+import { assertCanCreateProject, ProjectLimitError } from '@/lib/billing';
 
 const ALLOWED_CREATE_FIELDS = [
   'title', 'type', 'logline', 'concept', 'synopsis', 'style', 'berserker', 'shots', 'characters',
@@ -29,6 +30,24 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   await dbConnect();
+
+  const currentCount = await Project.countDocuments({ userId: auth.userId });
+  try {
+    await assertCanCreateProject(auth.userId, currentCount);
+  } catch (err) {
+    if (err instanceof ProjectLimitError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: err.code,
+          max: err.max,
+          upgradeHint: 'Upgrade your plan in Billing to create more projects.',
+        },
+        { status: 403 }
+      );
+    }
+    throw err;
+  }
 
   const data: Record<string, unknown> = { userId: auth.userId };
   for (const field of ALLOWED_CREATE_FIELDS) {

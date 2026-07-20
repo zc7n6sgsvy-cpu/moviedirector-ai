@@ -3,6 +3,17 @@ import GenerationJob from '@/models/GenerationJob';
 import Project from '@/models/Project';
 import { generateImage, generateVideo } from '@/lib/xai';
 import { persistRemoteAsset } from '@/lib/storage';
+import { refundCredits, estimateVideoCharge, estimateImageCharge } from '@/lib/billing';
+
+function itemRefundAmount(
+  jobMode: string,
+  item: { creditsReserved?: number },
+  duration?: number
+): number {
+  if (item.creditsReserved && item.creditsReserved > 0) return item.creditsReserved;
+  if (jobMode === 'image') return estimateImageCharge();
+  return estimateVideoCharge(duration || 8);
+}
 
 export async function processGenerationJob(jobId: string) {
   await dbConnect();
@@ -17,11 +28,18 @@ export async function processGenerationJob(jobId: string) {
     job.status = 'failed';
     job.error = 'Project not found';
     await job.save();
+    if (job.creditsReserved) {
+      await refundCredits(job.userId.toString(), job.creditsReserved, {
+        description: 'Refund: project missing for batch job',
+        jobId: job._id.toString(),
+      }).catch(() => {});
+    }
     return;
   }
 
   const shots = (project.shots || []) as Array<Record<string, unknown>>;
   let completed = 0;
+  let refundedCredits = 0;
 
   for (const item of job.items) {
     if (item.status === 'done') {
@@ -36,6 +54,14 @@ export async function processGenerationJob(jobId: string) {
     if (!shot) {
       item.status = 'failed';
       item.error = 'Shot not found';
+      const refundAmt = itemRefundAmount(job.mode, item, 8);
+      await refundCredits(job.userId.toString(), refundAmt, {
+        description: 'Refund: shot not found',
+        projectId: job.projectId.toString(),
+        jobId: job._id.toString(),
+        shotId: item.shotId,
+      }).catch(() => {});
+      refundedCredits += refundAmt;
       await job.save();
       continue;
     }
@@ -63,7 +89,13 @@ export async function processGenerationJob(jobId: string) {
 
         const result = await generateVideo({
           prompt,
-          mode: prevShot?.videoUrl && !shot.imageUrl ? 'extend-video' : shot.imageUrl ? 'image-to-video' : referenceImageUrls.length ? 'reference-to-video' : 'text-to-video',
+          mode: prevShot?.videoUrl && !shot.imageUrl
+            ? 'extend-video'
+            : shot.imageUrl
+              ? 'image-to-video'
+              : referenceImageUrls.length
+                ? 'reference-to-video'
+                : 'text-to-video',
           imageUrl: shot.imageUrl as string | undefined,
           videoUrl: prevShot?.videoUrl as string | undefined,
           referenceImageUrls,
@@ -85,6 +117,16 @@ export async function processGenerationJob(jobId: string) {
     } catch (err) {
       item.status = 'failed';
       item.error = err instanceof Error ? err.message : 'Generation failed';
+
+      const refundAmt = itemRefundAmount(job.mode, item, Number(shot.duration) || 8);
+      await refundCredits(job.userId.toString(), refundAmt, {
+        description: `Refund: generation failed — ${item.error}`,
+        projectId: job.projectId.toString(),
+        jobId: job._id.toString(),
+        shotId: item.shotId,
+      }).catch(() => {});
+      refundedCredits += refundAmt;
+
       await job.save();
     }
   }
@@ -94,5 +136,8 @@ export async function processGenerationJob(jobId: string) {
   job.status = failed === job.items.length ? 'failed' : done === job.items.length ? 'done' : 'processing';
   job.progress = Math.round((done / job.items.length) * 100);
   if (failed > 0 && done === 0) job.error = 'All generations failed';
+  if (refundedCredits > 0) {
+    job.error = (job.error ? job.error + ' · ' : '') + `Refunded ${refundedCredits} credits for failed items`;
+  }
   await job.save();
 }

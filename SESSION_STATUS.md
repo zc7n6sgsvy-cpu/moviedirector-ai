@@ -1,46 +1,56 @@
 # MovieDirector.ai - Session Checkpoint
 
-**Date:** 2026-06-25  
-**Status:** Good state for pause/resume
+**Date:** 2026-07-14  
+**Status:** Ship-ready product layer + monetization wired (awaiting production API keys)
 
 ## Connections
-- **Vercel:** zc7n6sgsvy-cpu (correct account - Acquire Investor's projects team)
-  - Project: moviedirector
-- **GitHub:** zc7n6sgsvy-cpu/moviedirector-ai (correct account)
-- **Database:** MongoDB (via MONGODB_URI)
+- **Vercel:** zc7n6sgsvy-cpu (Acquire Investor projects team) — project `moviedirector`
+- **GitHub:** zc7n6sgsvy-cpu/moviedirector-ai
+- **Database:** MongoDB (`MONGODB_URI`)
+- **Payments:** Stripe (membership + credit packs) — configure via env
 
-## Latest Deployment
-- Production: https://moviedirector-bat65qjcn-acquire-investors-projects.vercel.app
-- Stable alias: https://moviedirector-psi.vercel.app
+## Stable URLs
+- Alias: https://moviedirector-psi.vercel.app
+- Health: `GET /api/health`
 
-## Key Features Implemented
-- Real user accounts (signup/login with MongoDB + JWT)
-- Main public Feed for everyone's films
-- Messaging system (DMs between users)
-- Private subscription Channels
-- Full AI film creation pipeline (Concept → Shot List → References → Generate → Assemble → Render/Export)
-- Logo integrated (official cinematic MD logo)
-- MongoDB backend (Users, Projects, FeedItem, Message models)
-- API routes for auth, projects, feed, publish, messages
-- Social features: Publish to feed, discover films
+## What is product-complete (code)
 
-## How to Resume
-1. `cd /Users/ryan/moviedirector`
-2. `npm run dev`
-3. Start chatting with Grok: "Continue MovieDirector.ai" or reference this project
-4. I can re-explore the current code state instantly
+### Director console
+- Auth (signup/login/password reset)
+- Projects with type defaults, treatment, storyboard, cast, style, clips, voice, timeline, publish, API tab
+- Grok image + video generation (gated on credits when key present)
+- Batch jobs + polling + Blob persistence
+- Public feed, likes, comments, ratings, profiles, DMs
+- Channels (creator series; subscribe beta free)
+- Social Studio + export package / optional Render worker
 
-## Next Steps (when ready)
-- Add real Grok API integration for video generation (queue on Render)
-- Add comments/likes on feed
-- Real-time messaging (optional via Render or Pusher)
-- Scale improvements (pagination, caching, rate limiting)
-- Custom domain + production polish
+### Monetization (this session)
+- **Membership plans:** Free / Creator $39 / Pro $99 / Studio $299
+- **Usage credits:** image 8 cr · video 10 cr/s · packs 200/1000/5000
+- Signup grants **120 free credits**
+- Stripe Checkout + Customer Portal + Webhook
+- Generation returns **402** if insufficient credits (auto-refund on failure)
+- Billing UI + landing pricing + credit balance in nav
+- Plan-based rate limits + project caps
+
+### Key files
+- `lib/plans.ts`, `lib/billing.ts`, `lib/stripe.ts`
+- `app/api/billing/*`, `app/api/health`
+- `components/BillingPanel.tsx`
+- `LAUNCH.md` — full checklist
+
+## Env to go live
+See `.env.example` and `LAUNCH.md`.
+
+**Minimum for generation:** `MONGODB_URI`, `JWT_SECRET`, `XAI_API_KEY`, `BLOB_READ_WRITE_TOKEN`  
+**Minimum for revenue:** Stripe secret + webhook + 6 price IDs  
+
+## How to resume
+```bash
+cd /Users/ryan/moviedirector
+npm run dev
+```
+Then: "Continue MovieDirector.ai" or open `LAUNCH.md`.
 
 ## Stack
-- Next.js 16 (Vercel)
-- MongoDB
-- Render (for workers if needed)
-- GitHub
-
-All changes are pushed. Safe to terminate session.
+Next.js 16 · MongoDB · Vercel Blob · xAI Grok · Stripe · SendGrid · beehiiv · Upstash · Render worker (optional)

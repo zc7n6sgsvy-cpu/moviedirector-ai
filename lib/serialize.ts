@@ -30,5 +30,6 @@ export function serializeFeedItem(item: object) {
     commentCount: (record.commentCount as number) ?? 0,
     ratingAvg: (record.ratingAvg as number) ?? 0,
     ratingCount: (record.ratingCount as number) ?? 0,
+    previewClip: record.previewClip,
   };
 }

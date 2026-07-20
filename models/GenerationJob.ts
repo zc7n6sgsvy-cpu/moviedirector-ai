@@ -7,6 +7,7 @@ export interface IGenerationJobItem {
   imageUrl?: string;
   videoUrl?: string;
   error?: string;
+  creditsReserved?: number;
 }
 
 export interface IGenerationJob extends Document {
@@ -18,6 +19,7 @@ export interface IGenerationJob extends Document {
   items: IGenerationJobItem[];
   progress: number;
   error?: string;
+  creditsReserved?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,9 +37,11 @@ const GenerationJobSchema = new Schema<IGenerationJob>({
     imageUrl: String,
     videoUrl: String,
     error: String,
+    creditsReserved: Number,
   }],
   progress: { type: Number, default: 0 },
   error: String,
+  creditsReserved: { type: Number, default: 0 },
 }, { timestamps: true });
 
 const GenerationJob: Model<IGenerationJob> =

@@ -18,6 +18,7 @@ export type FeedFilm = {
   ratingAvg?: number;
   ratingCount?: number;
   publishedAt?: string;
+  previewClip?: string;
   project?: { previewClip?: string; type?: string; clipCount?: number } | null;
 };
 

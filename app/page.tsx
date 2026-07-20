@@ -12,77 +12,24 @@ import FilmDetailModal, { type FeedFilm } from '@/components/FilmDetailModal';
 import SharePanel from '@/components/SharePanel';
 import StarRating from '@/components/StarRating';
 import UserProfile from '@/components/UserProfile';
+import BillingPanel from '@/components/BillingPanel';
+import FirstCutWalkthrough from '@/components/FirstCutWalkthrough';
+import TrialOfferModal from '@/components/TrialOfferModal';
+import ProductTour from '@/components/ProductTour';
+import EnsembleStudio from '@/components/EnsembleStudio';
+import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
+import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
+import { PROJECT_TYPES as SHARED_PROJECT_TYPES } from '@/lib/types';
+import {
+  DEFAULT_TREATMENTS,
+  generateFramePrompt as generateFramePromptLib,
+  generateVideoPrompt as generateVideoPromptLib,
+  generateCharacterRefPrompt as generateCharacterRefPromptLib,
+} from '@/lib/prompts';
+import { estimateProjectCost } from '@/lib/cost';
 
-// Types
-type ProjectType = 'sitcom' | 'film' | 'commercial' | 'anime' | 'brand-fusion';
-
-interface Shot {
-  id: string;
-  number: number;
-  description: string;           // Main action / intent
-  camera: string;                // High-level camera
-  duration: number;
-  imageUrl?: string;
-  videoUrl?: string;
-  caption?: string;
-  voiceoverScript?: string;
-  characterIds?: string[];
-
-  // Advanced per-shot from professional workflow
-  emotion?: string;              // "stoic but intense. He is angry."
-  actingCues?: string;           // "blinking. Subtle micro-expressions."
-  dialogue?: string;             // Spoken lines + delivery
-  soundCues?: string;            // "SOUND EFFECTS ONLY: steady rush of sea wind"
-  cameraDetailed?: string;       // "FAST CAMERA ZOOM into a CLOSEUP. Slowly turns her head..."
-  styleNotes?: string;
-}
-
-interface Character {
-  id: string;
-  name: string;
-  role: string;
-  description: string;
-  referenceImageUrl?: string;
-}
-
-interface StyleTemplate {
-  description: string;           // e.g. "35mm film photograph, cinematic 1970s classical epic, horizontal 16:9, film grain"
-  referenceImageUrl?: string;    // Style reference still
-}
-
-interface Channel {
-  id: string;
-  name: string;
-  description: string;
-  price: number;
-  projectIds: string[];
-  subscriberCount?: number;
-  createdAt: string;
-}
-
-interface Project {
-  id: string;
-  title: string;
-  type: ProjectType;
-  logline: string;
-  concept?: string;              // High-level project definition (e.g. Homer’s Odyssey 1970s epic trailer)
-  synopsis?: string;
-  style?: StyleTemplate;
-  berserker: boolean;
-  shots: Shot[];
-  characters?: Character[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-const PROJECT_TYPES: { value: ProjectType; label: string; desc: string }[] = [
-  { value: 'sitcom', label: 'SITCOM EPISODE', desc: '22-min serialized episode. Characters. Punchlines. Heart.' },
-  { value: 'film', label: 'SHORT FILM', desc: 'Cinematic short. Mood, tension, payoff.' },
-  { value: 'commercial', label: 'COMMERCIAL', desc: '15-60s brand film. Sharp, emotional, memorable.' },
-  { value: 'anime', label: 'ANIME SHORT', desc: 'Stylized. Expressive. Epic action or quiet beauty.' },
-  { value: 'brand-fusion', label: 'BRAND FUSION', desc: 'Two brands. One story. Cultural collision.' },
-];
+const PROJECT_TYPES = SHARED_PROJECT_TYPES;
 
 const TYPE_STYLES: Record<ProjectType, string> = {
   sitcom: 'type-sitcom',
@@ -92,62 +39,7 @@ const TYPE_STYLES: Record<ProjectType, string> = {
   'brand-fusion': 'type-brand-fusion',
 };
 
-const DEFAULT_TREATMENTS: Record<ProjectType, (title: string, logline: string, berserker: boolean) => { synopsis: string; shots: Omit<Shot, 'id'>[] }> = {
-  sitcom: (title, logline, berserker) => ({
-    synopsis: `${title} — ${logline}\n\nA tight 22-minute episode. Cold open gag, A-plot/B-plot collision, tag. Emotional turn at minute 14. Killer button at the end.`,
-    shots: [
-      { number: 1, description: "COLD OPEN — The inciting ridiculousness. Tight on character face, smash cut into chaos.", camera: "Close-up → Whip pan", duration: 18 },
-      { number: 2, description: "TITLE CARD + THEME STING. The ensemble in absurd tableau.", camera: "Wide, locked off", duration: 6 },
-      { number: 3, description: "A-plot launch. The main character gets the terrible idea.", camera: "Medium, tracking push-in", duration: 24 },
-      { number: 4, description: "B-plot parallel. Side character’s minor disaster.", camera: "Over shoulder two-shot", duration: 16 },
-      { number: 5, description: "Cross-cut escalation. Everything gets worse in both plots at once.", camera: "Rapid intercut", duration: 32 },
-      { number: 6, description: "Heart moment. Two characters actually talk like humans for 8 seconds.", camera: "Intimate static", duration: 14 },
-      { number: 7, description: "Climax convergence. All threads slam together in the living room / office / bar.", camera: "Low angle, circling", duration: 28 },
-      { number: 8, description: "TAG. One last perfect dumb joke or surprisingly sweet button.", camera: "Single, tight", duration: 11 },
-    ]
-  }),
-  film: (title, logline, berserker) => ({
-    synopsis: `${title}\n\n${logline}\n\nA self-contained emotional machine. 6-12 minutes. No wasted frames. A decisive turn at 65%.`,
-    shots: [
-      { number: 1, description: "Opening image that contains the entire theme in metaphor.", camera: "Static wide or macro detail", duration: 14 },
-      { number: 2, description: "World and character established with minimal dialogue.", camera: "Handheld, observant", duration: 26 },
-      { number: 3, description: "The crack appears. Something is off. Subtle.", camera: "Slow dolly", duration: 19 },
-      { number: 4, description: "The choice or event that cannot be undone.", camera: "Locked. Sudden push.", duration: 9 },
-      { number: 5, description: "Consequences play out. The world reacts.", camera: "Long lens, distant", duration: 38 },
-      { number: 6, description: "Climactic image. The character changed forever, shown not said.", camera: "Final wide or extreme close", duration: 22 },
-    ]
-  }),
-  commercial: (title, logline, berserker) => ({
-    synopsis: `${title} — ${logline}\n\n30-45 second brand film. One crystal clear idea. Emotional truth + product truth in the same breath. Ends on a sting.`,
-    shots: [
-      { number: 1, description: "Hook frame. A human truth or striking visual that stops scroll.", camera: "Bold close or impossible wide", duration: 4 },
-      { number: 2, description: "The tension or desire. Real people, real stakes.", camera: "Naturalistic", duration: 9 },
-      { number: 3, description: "The brand arrives as the elegant solution, never the hero.", camera: "Elegant product reveal", duration: 6 },
-      { number: 4, description: "Emotional payoff. The after state feels better than before.", camera: "Soft light, human", duration: 7 },
-      { number: 5, description: "Logo + final line. Clean. Confident. Unforgettable.", camera: "Centered lockup", duration: 4 },
-    ]
-  }),
-  anime: (title, logline, berserker) => ({
-    synopsis: `${title}\n${logline}\n\nStylized short. Exaggerated expressions. One breathtaking action or quiet transcendent moment. Strong color language.`,
-    shots: [
-      { number: 1, description: "Iconic establishing: neon city, floating temple, or rain-soaked alley.", camera: "Epic wide, slight crane", duration: 12 },
-      { number: 2, description: "Hero silhouette or dramatic profile. Wind, hair, cape.", camera: "Low heroic angle", duration: 8 },
-      { number: 3, description: "The spark. Eyes narrow. Power builds.", camera: "Extreme close on eyes", duration: 5 },
-      { number: 4, description: "The clash or transformation. Pure visual poetry.", camera: "Dynamic, speed lines", duration: 18 },
-      { number: 5, description: "Aftermath. Stillness. A single petal falls or a cigarette is lit.", camera: "Static, painterly", duration: 14 },
-    ]
-  }),
-  'brand-fusion': (title, logline, berserker) => ({
-    synopsis: `${title}\n\n${logline}\n\nTwo worlds. One story. The tension between them is the product. Funny, moving, or both. Never forced.`,
-    shots: [
-      { number: 1, description: "Two visual languages collide in the same frame.", camera: "Split composition or deep focus", duration: 11 },
-      { number: 2, description: "Representatives of each brand meet. Friction + chemistry.", camera: "Two-shot, opposing eyelines", duration: 13 },
-      { number: 3, description: "The absurd beautiful middle ground. The fusion moment.", camera: "Symmetrical hero frame", duration: 9 },
-      { number: 4, description: "Cultural payoff. The combined thing feels inevitable.", camera: "Slow push to product", duration: 12 },
-      { number: 5, description: "Final title card. Both logos. One new world.", camera: "Clean lockup", duration: 5 },
-    ]
-  }),
-};
+// Using centralized DEFAULT_TREATMENTS from lib/prompts.ts
 
 function generateId() {
   return Math.random().toString(36).slice(2, 11);
@@ -259,8 +151,22 @@ export default function MovieDirector() {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed' | 'messages' | 'profile'>('landing');
+  const [currentView, setCurrentView] = useState<'landing' | 'dashboard' | 'workspace' | 'channels' | 'ideas' | 'social' | 'feed' | 'messages' | 'profile' | 'billing'>('landing');
   const [profileUsername, setProfileUsername] = useState<string | null>(null);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [userPlan, setUserPlan] = useState<string>('free');
+  const [showFirstCut, setShowFirstCut] = useState(false);
+  const [showTrialOffer, setShowTrialOffer] = useState(false);
+  const [firstCutFree, setFirstCutFree] = useState<{ images: number; videos: number } | null>(null);
+  const [firstCutStatus, setFirstCutStatus] = useState<string>('not_started');
+  const [hasUsedTrial, setHasUsedTrial] = useState(false);
+  const [trialActive, setTrialActive] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  const [publicPlans, setPublicPlans] = useState<Array<{
+    id: string; name: string; tagline: string; priceMonthlyUsd: number;
+    monthlyCredits: number; signupCredits: number; features: string[]; highlighted?: boolean;
+  }>>([]);
   const [subscribedChannels, setSubscribedChannels] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'timeline' | 'publish' | 'api'>('treatment');
@@ -287,6 +193,9 @@ export default function MovieDirector() {
   const [showMovieRender, setShowMovieRender] = useState(false);
   const [movieRenderProgress, setMovieRenderProgress] = useState(0);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetError, setResetError] = useState('');
   const [activeGenJob, setActiveGenJob] = useState<{ id: string; progress: number; status: string } | null>(null);
   const [feedCursor, setFeedCursor] = useState<string | null>(null);
   const [feedHasMore, setFeedHasMore] = useState(false);
@@ -297,6 +206,241 @@ export default function MovieDirector() {
   const [searchResults, setSearchResults] = useState<{ id: string; username: string; displayName: string }[]>([]);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'error'>('idle');
   const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Public pricing catalog (no auth)
+  useEffect(() => {
+    fetch('/api/billing/plans')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.plans) setPublicPlans(data.plans);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Stripe return deep-link + product tour
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const billing = params.get('billing');
+    if (billing === 'success') {
+      toast.success('Payment successful — credits / plan updated.');
+      setCurrentView('billing');
+      window.history.replaceState({}, '', '/');
+    } else if (billing === 'canceled') {
+      toast.message('Checkout canceled');
+      window.history.replaceState({}, '', '/');
+    } else if (billing === 'portal') {
+      setCurrentView('billing');
+      window.history.replaceState({}, '', '/');
+    }
+    if (params.get('tour') === '1' || params.get('tour') === 'true') {
+      setTourOpen(true);
+      setTourStep(0);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  // Drive app views from tour steps
+  useEffect(() => {
+    if (!tourOpen) return;
+    const step = PRODUCT_TOUR_STEPS[tourStep];
+    if (!step) return;
+
+    if (step.view === 'workspace') {
+      // Ensure a project is selected so workspace tabs render
+      setProjects((prev) => {
+        if (prev.length > 0) return prev;
+        return [createDemoProject()];
+      });
+      setSelectedProjectId((id) => {
+        // Will be set after projects update; also set in next tick via open
+        return id;
+      });
+      setCurrentView('workspace');
+      if (step.tab) setActiveTab(step.tab);
+    } else {
+      setCurrentView(step.view);
+      setSelectedProjectId(null);
+    }
+  }, [tourOpen, tourStep]);
+
+  // When entering workspace tour steps, force select first project
+  useEffect(() => {
+    if (!tourOpen) return;
+    const step = PRODUCT_TOUR_STEPS[tourStep];
+    if (step?.view === 'workspace' && projects.length > 0 && !selectedProjectId) {
+      setSelectedProjectId(projects[0].id);
+      if (step.tab) setActiveTab(step.tab);
+    }
+    if (step?.view === 'workspace' && step.tab && selectedProjectId) {
+      setActiveTab(step.tab);
+    }
+  }, [tourOpen, tourStep, projects, selectedProjectId]);
+
+  function startProductTour() {
+    setShowFirstCut(false);
+    setShowAuthModal(false);
+    setShowTrialOffer(false);
+    setShowNewModal(false);
+    // Ensure demo project exists for workspace tour stops
+    setProjects((prev) => {
+      if (prev.length > 0) return prev;
+      return [createDemoProject()];
+    });
+    setTourStep(0);
+    setTourOpen(true);
+    toast.message('Product tour started', {
+      description: '19 stops · Next/Back · chapter chips · Esc to exit',
+    });
+  }
+
+  // Keyboard: arrow keys + Esc while tour is open
+  useEffect(() => {
+    if (!tourOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTourOpen(false);
+      if (e.key === 'ArrowRight' || e.key === 'Enter') {
+        e.preventDefault();
+        setTourStep((i) => Math.min(PRODUCT_TOUR_STEPS.length - 1, i + 1));
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setTourStep((i) => Math.max(0, i - 1));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tourOpen]);
+
+  function goTourNext() {
+    setTourStep((i) => Math.min(PRODUCT_TOUR_STEPS.length - 1, i + 1));
+  }
+
+  function goTourPrev() {
+    setTourStep((i) => Math.max(0, i - 1));
+  }
+
+  async function refreshBilling(authToken: string) {
+    try {
+      const res = await fetch('/api/billing/account', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setCreditBalance(data.creditBalance ?? 0);
+      setUserPlan(data.plan || 'free');
+      if (data.firstCut) {
+        setFirstCutStatus(data.firstCut.status || 'not_started');
+        setFirstCutFree({
+          images: data.firstCut.freeImagesRemaining ?? 0,
+          videos: data.firstCut.freeVideosRemaining ?? 0,
+        });
+      }
+      if (data.trial) {
+        setHasUsedTrial(!!data.trial.hasUsedTrial);
+        setTrialActive(!!data.trial.active);
+      }
+    } catch {}
+  }
+
+  async function startTrial(mode: 'platform' | 'stripe') {
+    if (!token) {
+      setShowAuthModal(true);
+      return;
+    }
+    try {
+      const res = await fetch('/api/billing/start-trial', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === 'TRIAL_USED') {
+          toast.error(data.error);
+          setCurrentView('billing');
+          return;
+        }
+        if (data.code === 'STRIPE_NOT_CONFIGURED' || data.code === 'PRICE_NOT_CONFIGURED') {
+          // Fallback to platform trial
+          if (mode === 'stripe') {
+            toast.message('Stripe trial not configured — starting no-card trial');
+            return startTrial('platform');
+          }
+        }
+        throw new Error(data.error || 'Could not start trial');
+      }
+      if (data.url) {
+        window.location.href = data.url;
+        return;
+      }
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      setUserPlan(data.plan || 'creator');
+      setTrialActive(true);
+      setHasUsedTrial(true);
+      setShowTrialOffer(false);
+      setShowFirstCut(false);
+      toast.success(data.message || 'Creator free trial is active', {
+        description: `${data.trialCredits || 500} credits · ${data.trialDays || 7} days`,
+      });
+      await refreshBilling(token);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Trial failed');
+    }
+  }
+
+  function handleGenPaywall(data: {
+    error?: string;
+    code?: string;
+    nextStep?: string;
+  }) {
+    toast.error(data.error || 'Generation locked', {
+      description:
+        data.nextStep === 'first_cut'
+          ? 'Start your free First Cut walkthrough'
+          : data.nextStep === 'start_trial'
+            ? 'Start a 7-day free trial to keep creating'
+            : 'Open Billing to upgrade or buy credits',
+      action: {
+        label:
+          data.nextStep === 'first_cut'
+            ? 'First Cut'
+            : data.nextStep === 'start_trial'
+              ? 'Free trial'
+              : 'Billing',
+        onClick: () => {
+          if (data.nextStep === 'first_cut') setShowFirstCut(true);
+          else if (data.nextStep === 'start_trial') setShowTrialOffer(true);
+          else setCurrentView('billing');
+        },
+      },
+    });
+  }
+
+  async function completeFirstCutIfReady() {
+    if (!token || firstCutStatus === 'completed') return;
+    try {
+      const res = await fetch('/api/onboarding/first-cut', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: 'complete' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.firstCutStatus === 'completed') {
+        setFirstCutStatus('completed');
+        setShowTrialOffer(true);
+        toast.success('First Cut sample complete', {
+          description: 'Start a free trial to unlock full generation',
+        });
+      }
+    } catch {}
+  }
 
   // Load from localStorage + API if logged in
   useEffect(() => {
@@ -333,6 +477,9 @@ export default function MovieDirector() {
             const subs = await loadSubscriptions(savedToken);
             setSubscribedChannels(subs);
           } catch {}
+          try {
+            await refreshBilling(savedToken);
+          } catch {}
         })();
       } catch (e) {}
     } else {
@@ -363,6 +510,16 @@ export default function MovieDirector() {
         setFeedHasMore(!!feedData.hasMore);
       }
     }).catch(() => {});
+
+    // Handle password reset token from URL
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('reset');
+      if (token) {
+        setResetToken(token);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
   }, []);
 
   // Persist projects + channels + user + feed
@@ -607,8 +764,13 @@ export default function MovieDirector() {
     setNewProject({ title: '', type: 'film', concept: '', logline: '', styleHint: '', berserker: false });
 
     toast.success(`${project.title} is in pre-production. Let's direct.`, {
-      description: newProject.berserker ? "BERSERKER MODE ENGAGED — No creative limits." : undefined
+      description: newProject.berserker ? "BERSERKER MODE ENGAGED — No creative limits." : "Next: Generate your first frames in the Clips tab."
     });
+
+    // Guide new directors
+    setTimeout(() => {
+      if (activeTab !== 'treatment') setActiveTab('treatment');
+    }, 600);
   }
 
   function openProject(project: Project) {
@@ -659,6 +821,8 @@ export default function MovieDirector() {
   function signOut() {
     setToken(null);
     setCurrentUser(null);
+    setCreditBalance(null);
+    setUserPlan('free');
     setChannels([]);
     setSubscribedChannels([]);
     setConversations([]);
@@ -763,42 +927,10 @@ export default function MovieDirector() {
 
   function generateFramePrompt(shot: Shot): string {
     if (!selectedProject) return '';
-
-    const projectConcept = selectedProject.concept ? `Overall project: ${selectedProject.concept}. ` : '';
-    const styleRef = selectedProject.style?.description ? `Style: ${selectedProject.style.description}. ` : '';
-
-    let base = `${projectConcept}${styleRef}Cinematic still #${shot.number} from "${selectedProject.title}". ${shot.description}. Framing: ${shot.camera}.`;
-
-    // Incorporate advanced per-shot cues for pro workflow
-    if (shot.cameraDetailed) base += ` Camera direction: ${shot.cameraDetailed}.`;
-    if (shot.emotion) base += ` Performance: ${shot.emotion}.`;
-    if (shot.actingCues) base += ` Acting: ${shot.actingCues}.`;
-    if (shot.dialogue) base += ` Dialogue: "${shot.dialogue}".`;
-    if (shot.soundCues) base += ` Sound design note: ${shot.soundCues}.`;
-    if (shot.styleNotes) base += ` Additional style: ${shot.styleNotes}.`;
-
-    // Character refs for consistency
-    const chars = (selectedProject.characters || []).filter(c => shot.characterIds?.includes(c.id));
-    if (chars.length) {
-      base += ` Characters (maintain exact likeness from references): ${chars.map(c => `${c.name} - ${c.description}`).join('; ')}. `;
-    }
-
-    const quality = selectedProject.berserker 
-      ? "Hyper-detailed, unrestrained cinematic imagination, intense color, heavy film grain, directed like a master cinematographer. IMAX + anamorphic, one consistent world."
-      : "Photorealistic or stylized matching the project tone. Beautiful natural lighting. Shot on 35mm or Arri Alexa 65. Film grain, precise composition, one consistent world.";
-
-    const typeFlavor = {
-      sitcom: "Slightly heightened reality with emotional truth.",
-      film: "Dramatic, emotional, precise heroic composition.",
-      commercial: "Polished advertising perfection with brand soul.",
-      anime: "Gorgeous stylized anime key art. Dynamic and expressive.",
-      'brand-fusion': "Two visual languages perfectly fused into one coherent world.",
-    }[selectedProject.type];
-
-    return `${base} ${quality} ${typeFlavor} Ultra high resolution, masterpiece frame, coherent cinematic world.`;
+    return generateFramePromptLib(selectedProject, shot);
   }
 
-  async function simulateGenerateImage(shotId: string) {
+  async function generateFrame(shotId: string) {
     const shot = selectedProject?.shots.find(s => s.id === shotId);
     if (!shot || !selectedProject) return;
 
@@ -819,9 +951,34 @@ export default function MovieDirector() {
         body: JSON.stringify({ prompt, projectId: selectedProject.id, shotId }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Image generation failed');
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_CREDITS' || data.code === 'FREE_SAMPLE_EXHAUSTED') {
+          toast.dismiss(`gen-img-${shotId}`);
+          handleGenPaywall(data);
+          return;
+        }
+        throw new Error(data.error || 'Image generation failed');
+      }
       updateShot(shotId, { imageUrl: data.imageUrl });
-      toast.success('Frame generated', { id: `gen-img-${shotId}` });
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      if (data.firstCut) {
+        setFirstCutFree({
+          images: data.firstCut.freeImagesRemaining ?? 0,
+          videos: data.firstCut.freeVideosRemaining ?? 0,
+        });
+      }
+      toast.success(
+        data.freeSample
+          ? 'Free First Cut frame ready'
+          : data.creditsCharged
+            ? `Frame ready (−${data.creditsCharged} cr)`
+            : 'Frame generated',
+        { id: `gen-img-${shotId}` }
+      );
+      // After a free sample gen, gently offer completion/trial when budget low
+      if (data.freeSample && data.firstCut?.freeImagesRemaining === 0 && data.firstCut?.freeVideosRemaining === 0) {
+        completeFirstCutIfReady();
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Generation failed', { id: `gen-img-${shotId}` });
     }
@@ -830,34 +987,10 @@ export default function MovieDirector() {
   // === CLIP LAB: IMAGE -> VIDEO ===
   function generateVideoPrompt(shot: Shot): string {
     if (!selectedProject) return '';
-
-    const projectConcept = selectedProject.concept ? `Project vision: ${selectedProject.concept}. ` : '';
-    const styleRef = selectedProject.style?.description ? `Style reference: ${selectedProject.style.description}. ` : '';
-
-    let prompt = `${projectConcept}${styleRef}Animate this exact frame into a professional cinematic ${shot.duration}s video clip for "${selectedProject.title}". `;
-
-    prompt += `Action & intent: ${shot.description}. Camera: ${shot.camera}. `;
-
-    if (shot.cameraDetailed) prompt += `Precise camera work: ${shot.cameraDetailed}. `;
-    if (shot.emotion) prompt += `Emotion & performance: ${shot.emotion}. `;
-    if (shot.actingCues) prompt += `Micro acting: ${shot.actingCues}. `;
-    if (shot.dialogue) prompt += `Lip-synced dialogue delivery: "${shot.dialogue}". `;
-    if (shot.soundCues) prompt += `Native audio & sound design: ${shot.soundCues}. Include realistic ambient, effects, and any music cues. `;
-    if (shot.styleNotes) prompt += `Style notes: ${shot.styleNotes}. `;
-
-    // Consistency lock
-    const chars = (selectedProject.characters || []).filter(c => shot.characterIds?.includes(c.id));
-    if (chars.length > 0) {
-      prompt += `Maintain absolute character consistency with reference images: ${chars.map(c => c.name).join(', ')}. Same faces, clothing, lighting, and world. `;
-    }
-
-    prompt += `${selectedProject.berserker ? 'Bold, unrestrained cinematic motion with perfect physics and emotional intensity.' : 'Elegant purposeful motion, realistic physics, subtle life.'} `;
-    prompt += `High fidelity film look, sharp realism, coherent one consistent world across all shots. Native audio with lip sync.`;
-
-    return prompt;
+    return generateVideoPromptLib(selectedProject, shot);
   }
 
-  async function simulateGenerateVideo(shotId: string) {
+  async function generateVideoClip(shotId: string) {
     const shot = selectedProject?.shots.find(s => s.id === shotId);
     if (!shot || !selectedProject) return;
 
@@ -912,9 +1045,36 @@ export default function MovieDirector() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Video generation failed');
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_CREDITS' || data.code === 'FREE_SAMPLE_EXHAUSTED') {
+          toast.dismiss(`gen-vid-${shotId}`);
+          handleGenPaywall(data);
+          return;
+        }
+        throw new Error(data.error || 'Video generation failed');
+      }
       updateShot(shotId, { videoUrl: data.videoUrl });
-      toast.success('Video clip ready', { id: `gen-vid-${shotId}` });
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      if (data.firstCut) {
+        setFirstCutFree({
+          images: data.firstCut.freeImagesRemaining ?? 0,
+          videos: data.firstCut.freeVideosRemaining ?? 0,
+        });
+      }
+      toast.success(
+        data.freeSample
+          ? 'Free First Cut clip ready'
+          : data.creditsCharged
+            ? `Clip ready (−${data.creditsCharged} cr)`
+            : 'Video clip ready',
+        { id: `gen-vid-${shotId}` }
+      );
+      if (
+        data.freeSample &&
+        (data.firstCut?.freeVideosRemaining ?? 1) === 0
+      ) {
+        completeFirstCutIfReady();
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Generation failed', { id: `gen-vid-${shotId}` });
     }
@@ -950,10 +1110,24 @@ export default function MovieDirector() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Batch queue failed');
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_CREDITS') {
+          toast.error(data.error || 'Not enough credits for batch', {
+            id: 'batch-gen',
+            description: `Need ${data.required} credits. Open Billing to top up.`,
+            action: { label: 'Billing', onClick: () => setCurrentView('billing') },
+          });
+          return;
+        }
+        throw new Error(data.error || 'Batch queue failed');
+      }
 
       setActiveGenJob({ id: data.jobId, progress: 0, status: 'processing' });
-      toast.success(`Batch started — est. $${data.costEstimate?.totalUsd ?? '?'}`, { id: 'batch-gen' });
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      toast.success(
+        `Batch started — reserved ${data.creditsReserved ?? data.costEstimate?.credits ?? '?'} credits`,
+        { id: 'batch-gen' }
+      );
 
       if (genPollRef.current) clearInterval(genPollRef.current);
       genPollRef.current = setInterval(async () => {
@@ -978,6 +1152,7 @@ export default function MovieDirector() {
           setActiveGenJob(null);
           const refreshed = await loadUserProjects(token);
           if (refreshed?.length) setProjects(refreshed);
+          if (token) refreshBilling(token);
         }
       }, 4000);
     } catch (err) {
@@ -1023,25 +1198,61 @@ export default function MovieDirector() {
 
   function generateCharacterPrompt(char: Character): string {
     if (!selectedProject) return '';
-    return `Highly consistent character reference portrait for "${char.name}", ${char.role} in "${selectedProject.title}". ${char.description}. Cinematic headshot or 3/4, studio or environmental lighting that matches the project's tone. Perfect for use as reference image for all future shots and video clips. Ultra detailed face, signature wardrobe, repeatable across scenes.`;
+    return generateCharacterRefPromptLib(selectedProject, char);
   }
 
-  function generateCharacterRef(charId: string) {
+  async function generateCharacterRef(charId: string) {
     const project = selectedProject;
     if (!project) return;
     const char = (project.characters || []).find(c => c.id === charId);
     if (!char) return;
 
     const prompt = generateCharacterPrompt(char);
-    const seed = charId.slice(0,6);
-    const placeholder = `https://picsum.photos/seed/char${seed}/600/600`;
+    navigator.clipboard.writeText(prompt).catch(() => {});
 
-    updateCharacter(charId, { referenceImageUrl: placeholder });
-    navigator.clipboard.writeText(prompt);
+    if (!token) {
+      toast.error('Sign in to generate character references with Grok');
+      setShowAuthModal(true);
+      return;
+    }
 
-    toast.success(`Reference for ${char.name} captured.`, {
-      description: "Prompt copied. Ask me to generate the reference still with Grok and paste the URL back."
-    });
+    toast.loading(`Generating ref for ${char.name}…`, { id: `char-ref-${charId}` });
+    try {
+      const res = await fetch('/api/generate/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          prompt,
+          projectId: project.id,
+          shotId: `char-${charId}`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_CREDITS' || data.code === 'FREE_SAMPLE_EXHAUSTED') {
+          toast.dismiss(`char-ref-${charId}`);
+          handleGenPaywall(data);
+          return;
+        }
+        throw new Error(data.error || 'Reference generation failed');
+      }
+      updateCharacter(charId, { referenceImageUrl: data.imageUrl });
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      toast.success(
+        data.freeSample ? `Free ref ready for ${char.name}` : `Reference ready for ${char.name}`,
+        { id: `char-ref-${charId}`, description: 'Prompt also copied to clipboard.' }
+      );
+    } catch (err) {
+      // Fallback placeholder so offline/demo still works
+      const seed = charId.slice(0, 6);
+      updateCharacter(charId, {
+        referenceImageUrl: `https://picsum.photos/seed/char${seed}/600/600`,
+      });
+      toast.error(err instanceof Error ? err.message : 'Generation failed', {
+        id: `char-ref-${charId}`,
+        description: 'Prompt copied. Placeholder image set for layout.',
+      });
+    }
   }
 
   function toggleCharacterOnShot(shotId: string, charId: string) {
@@ -1348,6 +1559,17 @@ export default function MovieDirector() {
         };
         zip.file('manifest.json', JSON.stringify(manifest, null, 2));
         zip.file('clips.txt', clips.map((url, i) => `file 'clip_${String(i).padStart(3, '0')}.mp4'`).join('\n'));
+        zip.file('README.txt', 
+`MovieDirector Export
+Project: ${project.title}
+To stitch into a single MP4 (requires ffmpeg):
+
+1. Download all clips referenced in manifest.
+2. Put them in a folder.
+3. Run: ffmpeg -f concat -safe 0 -i clips.txt -c copy ${project.title.toLowerCase().replace(/\s+/g, '-')}.mp4
+
+Alternative: Set up Render worker for one-click server-side render.
+`);
         const content = await zip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(content);
         const a = document.createElement('a');
@@ -1355,7 +1577,7 @@ export default function MovieDirector() {
         a.download = `${project.title.toLowerCase().replace(/\s+/g, '-')}-export-package.zip`;
         a.click();
         setMovieRenderProgress(100);
-        toast.success('Export package ready (deploy Render worker for stitched MP4)');
+        toast.success('Export package ready (includes ffmpeg instructions)');
         setTimeout(() => { setShowMovieRender(false); setMovieRenderProgress(0); }, 1200);
         return;
       }
@@ -1391,6 +1613,32 @@ export default function MovieDirector() {
     }
   }
 
+  async function handlePasswordReset() {
+    if (!resetToken || !newPassword || newPassword.length < 6) {
+      setResetError('Password must be at least 6 characters');
+      return;
+    }
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: resetToken, newPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success('Password reset successful. Please sign in.');
+        setResetToken(null);
+        setNewPassword('');
+        setResetError('');
+        setShowAuthModal(true);
+      } else {
+        setResetError(data.error || 'Reset failed');
+      }
+    } catch {
+      setResetError('Network error');
+    }
+  }
+
   async function publishToFeed() {
     if (!selectedProject || !token || !currentUser) {
       toast.error('Sign in to publish to the feed');
@@ -1409,8 +1657,16 @@ export default function MovieDirector() {
 
       const item = data.feedItem;
       setFeed(prev => [item, ...prev.filter((f: { projectId?: string }) => f.projectId !== selectedProject.id)]);
-      toast.success('Published to the main Feed!');
+      toast.success(`"${selectedProject.title}" is live on the Feed!`, {
+        description: "Share your profile or add to a Channel to start building subscribers."
+      });
       setCurrentView('feed');
+      setTimeout(() => {
+        // Encourage distribution
+        if (confirm('Open Social Studio to prepare platform drops?')) {
+          setCurrentView('social');
+        }
+      }, 1800);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Publish failed');
     }
@@ -1572,8 +1828,8 @@ export default function MovieDirector() {
                     const fallback = document.createElement('div');
                     fallback.className = 'flex items-center gap-3';
                     fallback.innerHTML = `
-                      <div class="w-9 h-9 rounded bg-white flex items-center justify-center">
-                        <span class="text-[#050505] text-xl">🎬</span>
+                      <div class="w-9 h-9 rounded bg-[#111] flex items-center justify-center">
+                        <span class="text-[var(--gold)] text-xl">🎬</span>
                       </div>
                       <div>
                         <div class="font-display text-2xl tracking-[-1.5px] leading-none">MOVIEDIRECTOR</div>
@@ -1600,6 +1856,16 @@ export default function MovieDirector() {
             <button onClick={() => setCurrentView('social')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Share2 className="w-3.5 h-3.5"/> Social</button>
             <button onClick={() => { if (!currentUser) { setShowAuthModal(true); return; } setCurrentView('channels'); }} className="btn-ghost px-3 py-1 rounded-full text-sm">Channels</button>
             <button onClick={() => setCurrentView('ideas')} className="btn-ghost px-3 py-1 rounded-full text-sm flex items-center gap-1"><Zap className="w-3.5 h-3.5"/> Idea Lab</button>
+            <button onClick={() => { if (!currentUser) { setShowAuthModal(true); return; } setCurrentView('billing'); }} className="btn-ghost px-3 py-1 rounded-full text-sm text-[var(--gold)]">
+              {currentUser && creditBalance !== null ? `${creditBalance} cr` : 'Pricing'}
+            </button>
+            <button
+              onClick={startProductTour}
+              className="btn-outline px-3 py-1 rounded-full text-sm border-[var(--gold)]/40 text-[var(--gold)]"
+              title="Interactive product tour"
+            >
+              Take the tour
+            </button>
             <button onClick={() => setShowNewModal(true)} className="flex items-center gap-1.5 px-4 py-1 rounded-full bg-white/10 hover:bg-white/20 text-sm"><Plus className="w-3.5 h-3.5"/> New</button>
             <div className="pl-4 border-l border-white/10 text-xs text-white/50 font-mono">GROK</div>
             {currentUser ? (
@@ -1629,8 +1895,16 @@ export default function MovieDirector() {
               />
             </div>
 
-            <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full border border-white/20 text-xs tracking-[3px] mb-4">
-              GROK IMAGINE + VIDEO • UNCHAINED CREATIVE ENGINE
+            <div className="inline-flex flex-wrap items-center justify-center gap-2 mb-4">
+              <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full border border-white/20 text-xs tracking-[3px]">
+                GROK IMAGINE + VIDEO • UNCHAINED CREATIVE ENGINE
+              </div>
+              <button
+                onClick={startProductTour}
+                className="inline-flex items-center gap-2 px-4 py-1 rounded-full border border-[var(--gold)]/50 text-xs tracking-[2px] text-[var(--gold)] hover:bg-[var(--gold)]/10"
+              >
+                TAKE THE TOUR →
+              </button>
             </div>
 
             <h1 className="font-display text-[72px] leading-[0.9] tracking-[-4px] font-medium mb-4">
@@ -1642,29 +1916,34 @@ export default function MovieDirector() {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <button
+                onClick={() => {
+                  if (!currentUser) {
+                    setShowAuthModal(true);
+                    return;
+                  }
+                  setShowFirstCut(true);
+                }}
+                className="btn-gold px-10 py-4 text-lg rounded-full flex items-center justify-center gap-3"
+              >
+                CREATE YOUR FREE FIRST CUT <Wand2 className="w-5 h-5" />
+              </button>
               {!currentUser && (
                 <button
                   onClick={() => setShowAuthModal(true)}
-                  className="btn-gold px-10 py-4 text-lg rounded-full"
+                  className="btn-outline px-9 py-4 text-lg rounded-full"
                 >
-                  JOIN FREE — CREATE YOUR ACCOUNT
+                  JOIN FREE — NO CARD
                 </button>
               )}
               <button 
                 onClick={() => {
-                  if (!currentUser) { setShowAuthModal(true); return; }
-                  setShowNewModal(true);
-                }}
-                className="btn-gold px-10 py-4 text-lg rounded-full flex items-center justify-center gap-3"
-              >
-                START DIRECTING <Wand2 className="w-5 h-5" />
-              </button>
-              <button 
-                onClick={() => {
                   if (projects.length > 0) {
                     openProject(projects[0]);
+                  } else if (currentUser) {
+                    setShowFirstCut(true);
                   } else {
-                    setShowNewModal(true);
+                    setShowAuthModal(true);
                   }
                 }}
                 className="btn-outline px-9 py-4 text-lg rounded-full flex items-center justify-center gap-3"
@@ -1672,6 +1951,10 @@ export default function MovieDirector() {
                 ENTER THE VAULT
               </button>
             </div>
+            <p className="mt-6 text-sm text-white/45 max-w-xl mx-auto">
+              Free forever for planning. Free sample generations for a sitcom pilot, short film, commercial, or launch trailer.
+              Then a 7-day Creator trial → paid membership.
+            </p>
 
             <div className="mt-20 flex flex-wrap justify-center gap-x-12 gap-y-3 text-xs tracking-[2px] text-white/50">
               <div>LAUNCH FILMS AS YOUR PERSONAL BRAND</div>
@@ -1682,9 +1965,88 @@ export default function MovieDirector() {
             </div>
           </div>
 
+          {/* Pricing teaser on landing */}
+          {publicPlans.length > 0 && (
+            <div className="relative z-10 w-full max-w-6xl mx-auto mt-24 mb-16 px-4 text-left">
+              <div className="text-center mb-8">
+                <div className="uppercase tracking-[3px] text-xs text-[var(--gold)] mb-2">MEMBERSHIP + USAGE</div>
+                <div className="font-display text-4xl md:text-5xl tracking-tight">Plans built for big MRR</div>
+                <p className="text-white/50 mt-2 text-sm max-w-xl mx-auto">
+                  Monthly membership for base access. Credits for every frame and clip. Top up anytime — you control spend.
+                </p>
+              </div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {publicPlans.map((plan) => (
+                  <div
+                    key={plan.id}
+                    className={`rounded-3xl p-5 border text-left ${
+                      plan.highlighted ? 'border-[var(--gold)]/60 bg-[var(--gold)]/5' : 'border-white/10 bg-black/40'
+                    }`}
+                  >
+                    <div className="font-display text-2xl">{plan.name}</div>
+                    <div className="text-white/50 text-xs mt-1 min-h-[32px]">{plan.tagline}</div>
+                    <div className="font-mono text-3xl mt-3">
+                      {plan.priceMonthlyUsd === 0 ? '$0' : `$${plan.priceMonthlyUsd}`}
+                      <span className="text-sm text-white/40">/mo</span>
+                    </div>
+                    <div className="text-[var(--gold)] text-xs mt-2 mb-3">
+                      {plan.monthlyCredits > 0
+                        ? `${plan.monthlyCredits.toLocaleString()} credits / mo`
+                        : `${plan.signupCredits} starter credits`}
+                    </div>
+                    <ul className="text-[11px] text-white/55 space-y-1 mb-4">
+                      {plan.features.slice(0, 3).map((f) => (
+                        <li key={f}>· {f}</li>
+                      ))}
+                    </ul>
+                    <button
+                      onClick={() => {
+                        if (!currentUser) { setShowAuthModal(true); return; }
+                        setCurrentView('billing');
+                      }}
+                      className={`w-full py-2 rounded-2xl text-xs ${plan.highlighted ? 'btn-gold text-black' : 'btn-outline'}`}
+                    >
+                      {plan.id === 'free' ? 'Start free' : 'Choose plan'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Teaser strip */}
-          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-[10px] text-white/40 tracking-[4px]">
+          <div className="relative z-10 text-[10px] text-white/40 tracking-[4px] mb-8">
             YOUR FILMS ARE YOUR PERSONAL BRAND. SHARE EVERYWHERE.
+          </div>
+        </div>
+      )}
+
+      {/* BILLING */}
+      {currentView === 'billing' && (
+        <BillingPanel
+          token={token}
+          onAuthRequired={() => setShowAuthModal(true)}
+          onClose={() => setCurrentView(currentUser ? 'dashboard' : 'landing')}
+          onStartFirstCut={() => setShowFirstCut(true)}
+          onStartTrial={startTrial}
+        />
+      )}
+
+      {/* PASSWORD RESET */}
+      {resetToken && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-6">
+          <div className="director-card p-8 rounded-3xl max-w-md w-full">
+            <div className="font-display text-3xl mb-4">Reset Password</div>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="New password (min 6 chars)"
+              className="w-full p-3 rounded-xl bg-black border border-white/10 mb-4"
+            />
+            {resetError && <div className="text-red-400 text-sm mb-2">{resetError}</div>}
+            <button onClick={handlePasswordReset} className="btn-gold w-full py-3 rounded-2xl">Set New Password</button>
+            <button onClick={() => { setResetToken(null); setNewPassword(''); }} className="mt-3 text-sm text-white/60 w-full">Cancel</button>
           </div>
         </div>
       )}
@@ -1692,6 +2054,42 @@ export default function MovieDirector() {
       {/* DASHBOARD */}
       {currentView === 'dashboard' && (
         <div className="max-w-7xl mx-auto px-8 py-12">
+          <div className="mb-6 p-4 border border-[var(--gold)]/30 rounded-2xl bg-[#111]">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex-1 min-w-[240px]">
+                <div className="uppercase text-xs tracking-widest mb-1 text-[var(--gold)]">
+                  {firstCutStatus === 'not_started' || firstCutStatus === 'skipped'
+                    ? 'FREE FIRST CUT · NO CARD'
+                    : firstCutStatus === 'in_progress'
+                      ? 'FIRST CUT IN PROGRESS · FREE SAMPLE GENS'
+                      : trialActive
+                        ? 'CREATOR TRIAL ACTIVE'
+                        : 'DIRECTOR JOURNEY'}
+                </div>
+                <div className="text-sm">
+                  {firstCutStatus === 'not_started' || firstCutStatus === 'skipped' ? (
+                    <>Start a free walkthrough: sitcom pilot, short film, commercial, or launch trailer. Get a real sample media asset — then a 7-day free trial.</>
+                  ) : firstCutStatus === 'in_progress' ? (
+                    <>Generate free frames ({firstCutFree?.images ?? 0} left) + free clips ({firstCutFree?.videos ?? 0} left) on your sample project. Then start trial for full episodes.</>
+                  ) : trialActive ? (
+                    <>Trial credits power full generation. Finish your film, publish to the feed, then stay on Creator when trial ends.</>
+                  ) : (
+                    <>1. First Cut sample → 2. Free trial → 3. Paid membership + usage credits. Planning is always free.</>
+                  )}
+                </div>
+              </div>
+              <div className="text-right flex flex-col items-end gap-2">
+                <div className="font-mono text-2xl text-[var(--gold)]">{creditBalance ?? 0} <span className="text-sm text-white/50">cr</span></div>
+                {(firstCutStatus === 'not_started' || firstCutStatus === 'skipped') && (
+                  <button onClick={() => setShowFirstCut(true)} className="btn-gold text-xs px-4 py-1.5 rounded-full text-black">Start First Cut</button>
+                )}
+                {firstCutStatus === 'completed' && !trialActive && !hasUsedTrial && (
+                  <button onClick={() => setShowTrialOffer(true)} className="btn-gold text-xs px-4 py-1.5 rounded-full text-black">Start free trial</button>
+                )}
+                <button onClick={() => setCurrentView('billing')} className="text-xs underline text-white/60">Billing & plans</button>
+              </div>
+            </div>
+          </div>
           <div className="flex items-end justify-between mb-8">
             <div>
               <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">THE VAULT</div>
@@ -1819,7 +2217,7 @@ export default function MovieDirector() {
                     <div className="flex justify-between">
                       <div>
                         <div className="font-display text-4xl tracking-tight">{ch.name}</div>
-                        <div className="text-white/60 mt-1">Beta — free • {ch.projectIds.length} episodes • {ch.subscriberCount ?? 0} subscribers</div>
+                        <div className="text-white/60 mt-1">Beta • ${ch.price ?? 9}/mo • {ch.projectIds.length} episodes • {ch.subscriberCount ?? 0} subscribers</div>
                       </div>
                       <div className="text-right text-xs text-white/50">PRIVATE</div>
                     </div>
@@ -1847,7 +2245,7 @@ export default function MovieDirector() {
                     </div>
 
                     <div className="mt-6 pt-4 border-t border-white/10 text-xs text-white/50 flex justify-between items-center">
-                      <div>{ch.subscriberCount ?? 0} subscribers • Beta — free</div>
+                      <div>{ch.subscriberCount ?? 0} subscribers • $${ch.price ?? 9}/mo (beta)</div>
                       <button
                         onClick={() => {
                           if (!currentUser) return;
@@ -2283,7 +2681,7 @@ export default function MovieDirector() {
                     {tab === 'treatment' && 'CONCEPT'}
                     {tab === 'storyboard' && 'SHOT LIST'}
                     {tab === 'clips' && 'GENERATE'}
-                    {tab === 'cast' && 'REFERENCES'}
+                    {tab === 'cast' && 'ENSEMBLE'}
                     {tab === 'voice' && 'VOICE'}
                     {tab === 'timeline' && 'ASSEMBLE'}
                     {tab === 'publish' && 'LAUNCH'}
@@ -2448,8 +2846,8 @@ export default function MovieDirector() {
                           )}
 
                           <div className="flex gap-2 mt-auto">
-                            <button onClick={() => simulateGenerateImage(shot.id)} className="flex-1 btn-outline text-xs py-2 rounded-xl">GENERATE FRAME</button>
-                            <button onClick={() => simulateGenerateVideo(shot.id)} disabled={!shot.imageUrl} className="flex-1 btn-outline text-xs py-2 rounded-xl disabled:opacity-40">ANIMATE TO VIDEO</button>
+                            <button onClick={() => generateFrame(shot.id)} className="flex-1 btn-outline text-xs py-2 rounded-xl">GENERATE FRAME</button>
+                            <button onClick={() => generateVideoClip(shot.id)} disabled={!shot.imageUrl} className="flex-1 btn-outline text-xs py-2 rounded-xl disabled:opacity-40">ANIMATE TO VIDEO</button>
                             <button onClick={() => deleteShot(shot.id)} className="btn-ghost p-2 text-white/50 hover:text-red-500"><Trash2 className="w-3.5 h-3.5"/></button>
                           </div>
 
@@ -2477,6 +2875,10 @@ export default function MovieDirector() {
                 <div className="mb-8">
                   <div className="uppercase text-xs tracking-[3px] text-[var(--cyan)]">CLIP LAB — FULL AI VIDEO</div>
                   <div className="font-display text-5xl tracking-[-1.5px]">Stills become cinematic motion with Grok video.</div>
+                  <div className="text-xs text-white/50 mt-2">
+                    Est. cost for remaining clips: ${estimateProjectCost(selectedProject.shots).totalUsd.toFixed(2)} 
+                    (at current rates). Batch for efficiency.
+                  </div>
                 </div>
                 {selectedProject.shots.filter(s => s.imageUrl).length === 0 && <div className="p-12 border border-white/10 rounded-3xl text-center text-white/50">Generate frames first.</div>}
                 <div className="space-y-4">
@@ -2488,7 +2890,7 @@ export default function MovieDirector() {
                         <div className="text-lg tracking-tight mb-1 line-clamp-2">{shot.description}</div>
                         <div className="text-sm text-white/60 mb-4">{shot.camera} • {shot.duration}s</div>
                         <div className="flex gap-3">
-                          <button onClick={() => simulateGenerateVideo(shot.id)} disabled={!!shot.videoUrl} className="btn-gold px-7 py-1.5 rounded-2xl text-sm text-black">GENERATE GROK VIDEO CLIP</button>
+                          <button onClick={() => generateVideoClip(shot.id)} disabled={!!shot.videoUrl} className="btn-gold px-7 py-1.5 rounded-2xl text-sm text-black">GENERATE GROK VIDEO CLIP</button>
                           <button onClick={() => { navigator.clipboard.writeText(generateVideoPrompt(shot)); toast("Prompt copied"); }} className="btn-outline px-5 py-1.5 rounded-2xl text-sm">COPY VIDEO PROMPT</button>
                         </div>
                         {shot.videoUrl && <div className="text-xs text-[var(--cyan)] mt-2">Clip ready — reusable media asset</div>}
@@ -2499,39 +2901,70 @@ export default function MovieDirector() {
               </div>
             )}
 
-            {/* REFERENCES — Style + Character consistency (one consistent world) */}
+            {/* ENSEMBLE ATELIER — Style DNA + Persona Forge + The Company + Voice Lab */}
             {activeTab === 'cast' && (
-              <div className="max-w-4xl">
-                <div className="flex justify-between mb-8 items-center">
-                  <div>
-                    <div className="text-[var(--gold)] tracking-[2px] text-xs">REFERENCES ENGINE — CHARACTERS + STYLE</div>
-                    <div className="font-display text-5xl tracking-tight">Lock in one consistent world.</div>
-                  </div>
-                  <button onClick={addCharacter} className="btn-gold px-7 py-2.5 rounded-2xl text-sm text-black flex items-center gap-2"><Users className="w-4 h-4"/> ADD CHARACTER</button>
-                </div>
+              <div className="max-w-5xl">
+                <EnsembleStudio
+                  project={selectedProject}
+                  token={token}
+                  onUpdateProject={updateProject}
+                  onGenerateRef={generateCharacterRef}
+                />
 
-                {(selectedProject.characters || []).length === 0 && <div className="p-12 text-center text-white/50 border border-white/10 rounded-3xl">Add characters. Generate reference images. Tag them on shots for perfect consistency.</div>}
-
-                <div className="grid md:grid-cols-2 gap-5">
-                  {(selectedProject.characters || []).map(char => (
-                    <div key={char.id} className="director-card p-6 rounded-3xl">
-                      <div className="flex gap-4">
-                        {char.referenceImageUrl && <img src={char.referenceImageUrl} className="w-28 h-28 object-cover rounded-2xl border border-white/10" />}
-                        <div className="flex-1">
-                          <input className="bg-transparent text-3xl font-display tracking-tight w-full" value={char.name} onChange={e => updateCharacter(char.id, {name: e.target.value})} />
-                          <input className="bg-transparent text-white/60 w-full" value={char.role} onChange={e => updateCharacter(char.id, {role: e.target.value})} />
-                        </div>
-                      </div>
-                      <textarea className="director-input mt-4 w-full p-4 text-sm rounded-2xl h-24" value={char.description} onChange={e => updateCharacter(char.id, {description: e.target.value})} placeholder="Detailed visual + personality description for AI consistency..." />
-
-                      <div className="mt-4 flex gap-3">
-                        <button onClick={() => generateCharacterRef(char.id)} className="flex-1 btn-outline py-2 rounded-2xl text-sm">GENERATE REFERENCE IMAGE</button>
-                        <button onClick={() => deleteCharacter(char.id)} className="btn-ghost px-4 text-red-400">Delete</button>
-                      </div>
-                      <div className="text-[10px] mt-2 text-white/40">Use this character on shots in the Storyboard to force consistency in every Grok generation.</div>
+                {/* Quick cast cards + delete */}
+                {(selectedProject.characters || []).length > 0 && (
+                  <div className="mt-10">
+                    <div className="text-xs uppercase tracking-widest text-white/40 mb-3">
+                      Production cast cards
                     </div>
-                  ))}
-                </div>
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {(selectedProject.characters || []).map((char) => (
+                        <div key={char.id} className="director-card p-5 rounded-3xl">
+                          <div className="flex gap-4">
+                            {char.referenceImageUrl && (
+                              <img
+                                src={char.referenceImageUrl}
+                                className="w-24 h-24 object-cover rounded-2xl border border-white/10"
+                                alt={char.name}
+                              />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="font-display text-2xl truncate">{char.name}</div>
+                              <div className="text-sm text-white/50">
+                                {char.role}
+                                {char.medium ? ` · ${char.medium}` : ''}
+                              </div>
+                              {char.activeVoiceId && char.voiceVariants && (
+                                <div className="text-[10px] text-[var(--gold)] mt-1">
+                                  Voice:{' '}
+                                  {char.voiceVariants.find((v) => v.id === char.activeVoiceId)?.name ||
+                                    'set'}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => generateCharacterRef(char.id)}
+                              className="flex-1 btn-outline py-2 rounded-2xl text-xs"
+                            >
+                              GENERATE REFERENCE
+                            </button>
+                            <button
+                              onClick={() => deleteCharacter(char.id)}
+                              className="btn-ghost px-3 text-red-400 text-xs"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-white/40 mt-3">
+                      Tag characters on Storyboard shots so every Grok frame/clip keeps their look + voice direction.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2574,6 +3007,7 @@ export default function MovieDirector() {
                     <button
                       onClick={batchGenerateVideos}
                       disabled={!!activeGenJob || selectedProject.shots.every(s => s.videoUrl)}
+                      title={`Est. $${estimateProjectCost(selectedProject.shots).totalUsd.toFixed(2)}`}
                       className="btn-outline px-6 py-2 rounded-2xl text-sm disabled:opacity-40"
                     >
                       {activeGenJob ? `GENERATING ${activeGenJob.progress}%` : 'BATCH GENERATE ALL CLIPS'}
@@ -2588,22 +3022,30 @@ export default function MovieDirector() {
                   </div>
                 </div>
 
-                {/* Cost & Stats Bar - Better cost planning visible to user */}
+                {/* Cost & Stats Bar — credits first (what users pay) */}
                 <div className="mb-6 p-4 bg-[#111] rounded-2xl flex flex-wrap gap-6 text-sm items-center border border-white/10">
                   <div>
-                    <span className="text-white/50">EST. GENERATION COST</span><br />
-                    <span className="font-mono text-xl text-[var(--gold)]">~${estimateMovieCost(selectedProject.shots.length, 10, '720')}</span>
-                    <span className="text-xs text-white/50 ml-2">(720p, with retries)</span>
+                    <span className="text-white/50">YOUR CREDITS</span><br />
+                    <span className="font-mono text-xl text-[var(--gold)]">{creditBalance ?? '—'}</span>
+                    <button onClick={() => setCurrentView('billing')} className="text-xs underline ml-2 text-white/50">Top up</button>
+                  </div>
+                  <div>
+                    <span className="text-white/50">BATCH ESTIMATE</span><br />
+                    <span className="font-mono text-xl text-[var(--gold)]">
+                      {estimateProjectCost(selectedProject.shots).credits} cr
+                    </span>
+                    <span className="text-xs text-white/50 ml-2">
+                      (~${estimateProjectCost(selectedProject.shots).userListUsd?.toFixed?.(2) ?? estimateMovieCost(selectedProject.shots.length, 10, '720')})
+                    </span>
                   </div>
                   <div>
                     <span className="text-white/50">CLIPS READY</span><br />
                     <span className="font-mono text-xl">{selectedProject.shots.filter(s => s.videoUrl).length} / {selectedProject.shots.length}</span>
                   </div>
                   <div className="flex-1 text-xs text-white/50">
-                    Price to user: ~${Math.round(estimateMovieCost(selectedProject.shots.length, 10, '720') * 3.5)} (recommended 3.5x markup).<br />
-                    Use heavy "Extend from Frame" on connected shots to lower effective cost and improve consistency.
+                    Plan: <span className="text-white/80 capitalize">{userPlan}</span>. Image = 8 cr · Video = 10 cr/s.
+                    Failed gens auto-refund. Membership renews monthly credits.
                   </div>
-                  <button onClick={() => setShowMovieRender(true)} className="text-xs underline">View pricing breakdown</button>
                 </div>
 
                 <div className="video-frame aspect-video rounded-3xl mb-6 overflow-hidden flex items-center justify-center bg-black max-h-[440px]">
@@ -2678,10 +3120,46 @@ export default function MovieDirector() {
 
             {/* API */}
             {activeTab === 'api' && (
-              <div className="max-w-2xl">
+              <div className="max-w-3xl">
                 <div className="font-display text-6xl tracking-[-2.5px] mb-4">Director API</div>
-                <p>Full AI movie creation + channels available via API. Characters, references, voiceovers, video generation, channel subscriptions.</p>
-                <button onClick={copyApiExample} className="btn-gold mt-8 px-8 py-3 rounded-2xl text-sm text-black">COPY EXAMPLE REQUEST</button>
+                <p className="text-xl text-white/70">Programmatically direct films. Perfect for agents, studios, and automation.</p>
+
+                <div className="mt-8 space-y-6 text-sm">
+                  <div>
+                    <div className="font-mono text-[var(--gold)] mb-1">POST /api/projects</div>
+                    <div>Create project with title, logline, type, concept. Returns projectId.</div>
+                  </div>
+                  <div>
+                    <div className="font-mono text-[var(--gold)] mb-1">POST /api/generate/batch</div>
+                    <div>Queue Grok video generation for multiple shots. Polling via /api/generate/jobs/:id</div>
+                  </div>
+                  <div>
+                    <div className="font-mono text-[var(--gold)] mb-1">POST /api/publish</div>
+                    <div>Publish finished project to the public feed.</div>
+                  </div>
+                  <div>
+                    <div className="font-mono text-[var(--gold)] mb-1">Channels &amp; Social</div>
+                    <div>Manage series, subscribers, generate social cut prompts.</div>
+                  </div>
+                </div>
+
+                <div className="mt-6 p-4 border border-white/10 rounded-2xl text-xs text-white/60">
+                  Current auth: Bearer JWT (from login). Dedicated API keys coming in this phase.
+                </div>
+
+                <div className="mt-4 text-xs">
+                  <div className="mb-1 text-[var(--gold)]">Example: Create project + trigger generation</div>
+                  <pre className="bg-black/60 p-3 rounded text-[10px] overflow-auto">{`curl -X POST /api/projects \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -d '{"title":"My Film","type":"film","logline":"..."}'
+
+curl -X POST /api/generate/batch \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -d '{"projectId":"...","shotIds":[...]}'`}</pre>
+                </div>
+
+                <button onClick={copyApiExample} className="btn-gold mt-6 px-8 py-3 rounded-2xl text-sm text-black">COPY CURL EXAMPLE</button>
+                <div className="text-[10px] mt-2 text-white/40">These routes are production-ready. Next: proper API keys + /v1 surface.</div>
               </div>
             )}
           </div>
@@ -2694,98 +3172,143 @@ export default function MovieDirector() {
         </div>
       )}
 
-      {/* NEW PROJECT MODAL — Beautiful & serious */}
+      {/* NEW PROJECT MODAL — scrollable so title/border never clip on short screens */}
       <AnimatePresence>
         {showNewModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-6">
-            <motion.div 
-              initial={{ opacity: 0, y: 20, scale: 0.985 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.985 }}
-              className="modal bg-[#0a0a0a] border border-white/10 w-full max-w-2xl rounded-3xl overflow-hidden"
-            >
-              <div className="px-9 pt-9 pb-8">
-                <div className="font-display text-5xl tracking-[-2px]">New Production</div>
-                <p className="text-white/60 mt-2">Tell us what we’re making. Be specific. Be bold.</p>
-
-                <div className="mt-8 space-y-7">
-                  <div>
-                    <div className="text-xs tracking-widest text-white/50 mb-2">PROJECT TITLE</div>
-                    <input 
-                      value={newProject.title} 
-                      onChange={(e) => setNewProject({ ...newProject, title: e.target.value })} 
-                      className="director-input w-full px-6 py-4 text-3xl font-display tracking-tight rounded-2xl" 
-                      placeholder="ODYSSEY — 1970s Epic Trailer" 
-                    />
-                  </div>
-
-                  <div>
-                    <div className="text-xs tracking-widest text-white/50 mb-2">PROJECT CONCEPT — HIGH LEVEL VISION</div>
-                    <textarea 
-                      value={newProject.concept} 
-                      onChange={(e) => setNewProject({ ...newProject, concept: e.target.value })} 
-                      className="director-input w-full px-6 py-4 rounded-2xl text-base h-20" 
-                      placeholder="Cinematic trailer for Homer’s Odyssey shot as a 1970s classical epic. 36 shots, one consistent world. 35mm film, warm grain, heroic scale."
-                    />
-                  </div>
-
-                  <div>
-                    <div className="text-xs tracking-widest text-white/50 mb-2">STYLE REFERENCE (optional)</div>
-                    <input 
-                      value={newProject.styleHint} 
-                      onChange={(e) => setNewProject({ ...newProject, styleHint: e.target.value })} 
-                      className="director-input w-full px-6 py-3 rounded-2xl" 
-                      placeholder="35mm film photograph, cinematic 1970s, classical epic, horizontal 16:9, rich film grain"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="text-xs tracking-widest text-white/50 mb-2">LOG LINE — ONE SENTENCE</div>
-                    <textarea 
-                      value={newProject.logline} 
-                      onChange={(e) => setNewProject({ ...newProject, logline: e.target.value })} 
-                      className="director-input w-full px-6 py-4 rounded-2xl text-lg" 
-                      placeholder="A washed-up director uses Grok to make the greatest film of all time... but the AI starts directing him."
-                    />
-                  </div>
-
-                  <div>
-                    <div className="text-xs tracking-widest text-white/50 mb-3">FORMAT</div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {PROJECT_TYPES.map((t) => (
-                        <button 
-                          key={t.value}
-                          onClick={() => setNewProject({ ...newProject, type: t.value })}
-                          className={`p-5 text-left rounded-2xl border transition-all ${newProject.type === t.value ? 'border-[var(--gold)] bg-white/5' : 'border-white/10 hover:border-white/30'}`}
-                        >
-                          <div className="font-semibold tracking-wider text-sm mb-1.5">{t.label}</div>
-                          <div className="text-sm text-white/60">{t.desc}</div>
-                        </button>
-                      ))}
+          <div className="fixed inset-0 z-[150] overflow-y-auto bg-black/90">
+            <div className="flex min-h-full items-start justify-center p-4 sm:p-6 sm:items-center">
+              <motion.div
+                initial={{ opacity: 0, y: 20, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.985 }}
+                className="modal relative my-4 sm:my-8 flex w-full max-w-2xl max-h-[min(92vh,900px)] flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#0a0a0a] shadow-2xl"
+              >
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 px-6 pt-6 pb-4 sm:px-9 sm:pt-8">
+                  <div className="min-w-0">
+                    <div className="font-display text-3xl tracking-tight sm:text-4xl sm:tracking-[-2px]">
+                      New Production
                     </div>
+                    <p className="mt-1 text-sm text-white/60">Tell us what we’re making. Be specific. Be bold.</p>
+                    <p className="mt-1 text-[10px] text-white/40">
+                      Treatment → Storyboard &amp; Cast → Generate → Assemble → Publish
+                    </p>
                   </div>
-
-                  {/* Berserker Mode */}
-                  <div 
-                    onClick={() => setNewProject({ ...newProject, berserker: !newProject.berserker })}
-                    className={`flex items-center gap-4 p-5 rounded-2xl border cursor-pointer transition-all ${newProject.berserker ? 'berserker border-[var(--crimson)]' : 'border-white/10'}`}
+                  <button
+                    type="button"
+                    onClick={() => setShowNewModal(false)}
+                    className="shrink-0 rounded-full px-3 py-1 text-white/50 hover:bg-white/10 hover:text-white"
+                    aria-label="Close"
                   >
-                    <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 border ${newProject.berserker ? 'bg-red-600 border-red-600' : 'border-white/30'}`}>
-                      {newProject.berserker && <Zap className="w-3.5 h-3.5" />}
-                    </div>
+                    ✕
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-9 sm:py-6">
+                  <div className="space-y-5 sm:space-y-6">
                     <div>
-                      <div className="font-semibold">BERSERKER MODE — UNCHAINED</div>
-                      <div className="text-sm text-white/60">Remove all creative guardrails. Wild ideas. Maximum ambition. No taste limits.</div>
+                      <div className="mb-2 text-xs tracking-widest text-white/50">PROJECT TITLE</div>
+                      <input
+                        value={newProject.title}
+                        onChange={(e) => setNewProject({ ...newProject, title: e.target.value })}
+                        className="director-input w-full rounded-2xl px-5 py-3 text-2xl font-display tracking-tight sm:text-3xl"
+                        placeholder="ODYSSEY — 1970s Epic Trailer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-xs tracking-widest text-white/50">
+                        PROJECT CONCEPT — HIGH LEVEL VISION
+                      </div>
+                      <textarea
+                        value={newProject.concept}
+                        onChange={(e) => setNewProject({ ...newProject, concept: e.target.value })}
+                        className="director-input h-20 w-full rounded-2xl px-5 py-3 text-base"
+                        placeholder="Cinematic trailer for Homer’s Odyssey shot as a 1970s classical epic. 36 shots, one consistent world. 35mm film, warm grain, heroic scale."
+                      />
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-xs tracking-widest text-white/50">STYLE REFERENCE (optional)</div>
+                      <input
+                        value={newProject.styleHint}
+                        onChange={(e) => setNewProject({ ...newProject, styleHint: e.target.value })}
+                        className="director-input w-full rounded-2xl px-5 py-3"
+                        placeholder="35mm film photograph, cinematic 1970s, classical epic, horizontal 16:9, rich film grain"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="mb-2 text-xs tracking-widest text-white/50">LOG LINE — ONE SENTENCE</div>
+                      <textarea
+                        value={newProject.logline}
+                        onChange={(e) => setNewProject({ ...newProject, logline: e.target.value })}
+                        className="director-input w-full rounded-2xl px-5 py-3 text-base sm:text-lg"
+                        placeholder="A washed-up director uses Grok to make the greatest film of all time... but the AI starts directing him."
+                      />
+                    </div>
+
+                    <div>
+                      <div className="mb-3 text-xs tracking-widest text-white/50">FORMAT</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {PROJECT_TYPES.map((t) => (
+                          <button
+                            key={t.value}
+                            type="button"
+                            onClick={() => setNewProject({ ...newProject, type: t.value })}
+                            className={`rounded-2xl border p-4 text-left transition-all sm:p-5 ${
+                              newProject.type === t.value
+                                ? 'border-[var(--gold)] bg-white/5'
+                                : 'border-white/10 hover:border-white/30'
+                            }`}
+                          >
+                            <div className="mb-1 text-sm font-semibold tracking-wider">{t.label}</div>
+                            <div className="text-sm text-white/60">{t.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div
+                      onClick={() => setNewProject({ ...newProject, berserker: !newProject.berserker })}
+                      className={`flex cursor-pointer items-center gap-4 rounded-2xl border p-4 transition-all sm:p-5 ${
+                        newProject.berserker ? 'berserker border-[var(--crimson)]' : 'border-white/10'
+                      }`}
+                    >
+                      <div
+                        className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border ${
+                          newProject.berserker ? 'border-red-600 bg-red-600' : 'border-white/30'
+                        }`}
+                      >
+                        {newProject.berserker && <Zap className="h-3.5 w-3.5" />}
+                      </div>
+                      <div>
+                        <div className="font-semibold">BERSERKER MODE — UNCHAINED</div>
+                        <div className="text-sm text-white/60">
+                          Remove all creative guardrails. Wild ideas. Maximum ambition. No taste limits.
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="border-t border-white/10 px-9 py-5 flex justify-end gap-3 bg-black/30">
-                <button onClick={() => setShowNewModal(false)} className="px-8 py-3 text-sm text-white/70 hover:text-white">CANCEL</button>
-                <button onClick={async () => await createProject()} className="btn-gold px-10 py-3 text-base rounded-2xl">CREATE PROJECT &amp; BREAK IT DOWN</button>
-              </div>
-            </motion.div>
+                <div className="flex shrink-0 justify-end gap-3 border-t border-white/10 bg-black/40 px-6 py-4 sm:px-9">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewModal(false)}
+                    className="px-6 py-3 text-sm text-white/70 hover:text-white sm:px-8"
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => await createProject()}
+                    className="btn-gold rounded-2xl px-6 py-3 text-sm sm:px-10 sm:text-base"
+                  >
+                    CREATE PROJECT &amp; BREAK IT DOWN
+                  </button>
+                </div>
+              </motion.div>
+            </div>
           </div>
         )}
       </AnimatePresence>
@@ -2861,8 +3384,75 @@ export default function MovieDirector() {
           if (chs.length) setChannels(chs);
           const subs = await loadSubscriptions(data.token);
           setSubscribedChannels(subs);
-          toast.success(`Welcome @${data.user.username}`);
+          await refreshBilling(data.token);
+          const bal = (data.user as { creditBalance?: number }).creditBalance;
+          toast.success(`Welcome, Director @${data.user.username}`, {
+            description: 'Create your free First Cut sample — no card required.',
+          });
+
+          // New directors → First Cut walkthrough (genius free path)
+          setTimeout(() => {
+            const onboarding = (data.user as { onboarding?: string; firstCutStatus?: string }).onboarding
+              || (data.user as { firstCutStatus?: string }).firstCutStatus;
+            const hasReal = (userProjects && userProjects.length > 0);
+            if (!hasReal || onboarding === 'first_cut' || !onboarding) {
+              setShowFirstCut(true);
+            }
+          }, 700);
         }}
+      />
+
+      <FirstCutWalkthrough
+        open={showFirstCut}
+        token={token}
+        onClose={() => setShowFirstCut(false)}
+        onAuthRequired={() => {
+          setShowFirstCut(false);
+          setShowAuthModal(true);
+        }}
+        onProjectReady={(raw, meta) => {
+          const project = normalizeProject(raw as Record<string, unknown>);
+          setProjects((prev) => {
+            if (prev.some((p) => p.id === project.id)) {
+              return prev.map((p) => (p.id === project.id ? project : p));
+            }
+            return [project, ...prev.filter((p) => !String(p.id).startsWith('demo'))];
+          });
+          setSelectedProjectId(project.id);
+          setCurrentView('workspace');
+          setActiveTab('clips');
+          setFirstCutStatus('in_progress');
+          setFirstCutFree({ images: meta.freeImagesRemaining, videos: meta.freeVideosRemaining });
+          toast.success('First Cut project ready', {
+            description: meta.sampleOutcome || 'Generate free frames, then free video clips in Clips.',
+          });
+        }}
+        onStartTrial={startTrial}
+        onOpenBilling={() => {
+          setShowFirstCut(false);
+          setCurrentView('billing');
+        }}
+      />
+
+      <TrialOfferModal
+        open={showTrialOffer}
+        onClose={() => setShowTrialOffer(false)}
+        hasUsedTrial={hasUsedTrial}
+        onStartPlatformTrial={() => startTrial('platform')}
+        onStartStripeTrial={() => startTrial('stripe')}
+        onOpenBilling={() => {
+          setShowTrialOffer(false);
+          setCurrentView('billing');
+        }}
+      />
+
+      <ProductTour
+        open={tourOpen}
+        stepIndex={tourStep}
+        onClose={() => setTourOpen(false)}
+        onNext={goTourNext}
+        onPrev={goTourPrev}
+        onGoTo={(i) => setTourStep(i)}
       />
     </div>
   );
