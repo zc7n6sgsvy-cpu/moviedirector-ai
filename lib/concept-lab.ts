@@ -8,10 +8,13 @@
 import type { Character, Project, Shot } from '@/lib/types';
 
 export type LabStationId =
+  | 'auto'
   | 'world'
   | 'script'
+  | 'prompts'
   | 'cast-direction'
   | 'continuity'
+  | 'economy'
   | 'readiness';
 
 export interface WorldBible {
@@ -40,6 +43,12 @@ export const LAB_STATIONS: {
   purpose: string;
 }[] = [
   {
+    id: 'auto',
+    label: 'Auto Mode',
+    short: 'Auto',
+    purpose: 'Minimal input: title + logline → auto treatment & shot list. Skip the deep lab when you want speed.',
+  },
+  {
     id: 'world',
     label: 'World Bible',
     short: 'World',
@@ -52,6 +61,12 @@ export const LAB_STATIONS: {
     purpose: 'Master script / teleplay. Dialogue and scene order that drive shots.',
   },
   {
+    id: 'prompts',
+    label: 'Prompt Control',
+    short: 'Prompts',
+    purpose: 'Edit the master Grok prompt, suffix, negatives — full premium control before spend.',
+  },
+  {
     id: 'cast-direction',
     label: 'Character Direction',
     short: 'Direction',
@@ -62,6 +77,12 @@ export const LAB_STATIONS: {
     label: 'Continuity Desk',
     short: 'Continuity',
     purpose: 'Wardrobe, locations, props, timeline — what must never break.',
+  },
+  {
+    id: 'economy',
+    label: 'Cost & Drafts',
+    short: 'Costs',
+    purpose: 'Why this is not free like X Imagine — and how drafts + retakes keep testing sane.',
   },
   {
     id: 'readiness',
@@ -202,6 +223,16 @@ export function labReadiness(project: Project): { score: number; checks: LabChec
       label: 'Style / visual law',
       ok: !!(project.style?.description?.trim() || world?.visualLaws?.trim()),
       hint: 'Style DNA or visual laws so frames match.',
+    },
+    {
+      id: 'prompts',
+      label: 'Master prompt control',
+      ok: !!(
+        project.generationSettings?.masterPrompt?.trim() ||
+        project.generationSettings?.negativePrompt?.trim() ||
+        project.style?.description?.trim()
+      ),
+      hint: 'Set master prompt / negatives in Prompts station (free).',
     },
   ];
 

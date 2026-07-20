@@ -5,6 +5,8 @@ import type { CharacterMedium, VoiceAxes, VoiceVariant } from '@/lib/ensemble';
 
 export type ProjectType = 'sitcom' | 'film' | 'commercial' | 'anime' | 'brand-fusion';
 
+export type GenQuality = 'draft' | 'final';
+
 export interface Shot {
   id: string;
   number: number;
@@ -24,6 +26,47 @@ export interface Shot {
   soundCues?: string;
   cameraDetailed?: string;
   styleNotes?: string;
+
+  /**
+   * Full freeform frame prompt. If set, replaces the auto-built prompt entirely
+   * (master prefix / negative still wrap unless rawPrompt is true).
+   */
+  framePromptOverride?: string;
+  /** Full freeform video prompt override */
+  videoPromptOverride?: string;
+  /** Edited copy of auto prompt the director locked in (still free to change) */
+  lockedFramePrompt?: string;
+  lockedVideoPrompt?: string;
+  /** Skip master/negative wrap — pure prompt sent to Grok */
+  rawPrompt?: boolean;
+  lastFrameQuality?: GenQuality;
+  lastVideoQuality?: GenQuality;
+}
+
+/**
+ * How the director works this project:
+ * - auto: minimal input (title + logline) → system builds treatment + shot list
+ * - lab: full stations (world, script, prompts, direction, continuity)
+ * Berserker is separate — it only changes creative intensity, not this mode.
+ */
+export type WorkflowMode = 'auto' | 'lab';
+
+/** Project-level generation / prompt control (Concept Lab · Prompts station) */
+export interface GenerationSettings {
+  /** auto = minimal one-click build; lab = full pre-production control */
+  workflowMode?: WorkflowMode;
+  /** Default quality for generate buttons */
+  defaultQuality?: GenQuality;
+  /** Injected at the start of every auto-built prompt */
+  masterPrompt?: string;
+  /** Always appended after the shot prompt */
+  promptSuffix?: string;
+  /** Things the model must avoid */
+  negativePrompt?: string;
+  /** Default aspect ratio for frames */
+  aspectRatio?: string;
+  /** Director notes always present in gen prompts */
+  directorNotes?: string;
 }
 
 export interface Character {
@@ -108,6 +151,8 @@ export interface Project {
   worldBible?: WorldBible;
   /** Continuity desk notes (Concept Lab) */
   continuity?: ContinuityNotes;
+  /** Master prompt control + default quality (Concept Lab) */
+  generationSettings?: GenerationSettings;
   isFirstCut?: boolean;
   firstCutPath?: string;
   createdAt: string;

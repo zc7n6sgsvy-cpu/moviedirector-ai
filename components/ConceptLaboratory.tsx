@@ -18,6 +18,8 @@ type Props = {
   onGoStoryboard: () => void;
   onGoEnsemble: () => void;
   onGoClips: () => void;
+  /** One-click: treatment + shot list from title/logline (minimal mode) */
+  onRunAutoBuild: () => void;
 };
 
 export default function ConceptLaboratory({
@@ -26,12 +28,23 @@ export default function ConceptLaboratory({
   onGoStoryboard,
   onGoEnsemble,
   onGoClips,
+  onRunAutoBuild,
 }: Props) {
-  const [station, setStation] = useState<LabStationId>('world');
+  const mode = project.generationSettings?.workflowMode || 'lab';
+  const [station, setStation] = useState<LabStationId>(mode === 'auto' ? 'auto' : 'world');
   const world: WorldBible = { ...emptyWorldBible(), ...project.worldBible };
   const continuity: ContinuityNotes = { ...emptyContinuity(), ...project.continuity };
   const cast = project.characters || [];
   const readiness = useMemo(() => labReadiness(project), [project]);
+  const mediaCount = (project.shots || []).filter((s) => s.imageUrl || s.videoUrl).length;
+
+  function setMode(workflowMode: 'auto' | 'lab') {
+    onUpdate((p) => ({
+      ...p,
+      generationSettings: { ...p.generationSettings, workflowMode },
+    }));
+    setStation(workflowMode === 'auto' ? 'auto' : 'world');
+  }
 
   function setWorld(patch: Partial<WorldBible>) {
     onUpdate((p) => ({
@@ -82,8 +95,8 @@ export default function ConceptLaboratory({
           </div>
           <div className="font-display text-4xl sm:text-5xl tracking-tight">The Lab</div>
           <p className="text-sm text-white/55 mt-2 max-w-2xl">
-            Control the film before you burn generation. World bible, master script, character
-            direction, and continuity — then generate with intention.
+            Plan free. Generate when ready. Use <strong className="text-white/80">Auto</strong> for
+            minimal input, or walk the stations for full director control.
           </p>
         </div>
         <div className="text-right">
@@ -102,27 +115,116 @@ export default function ConceptLaboratory({
         </div>
       </div>
 
-      {/* Station nav */}
+      {/* Mode toggle — Auto vs full Lab */}
+      <div className="mb-6 p-1 rounded-2xl border border-white/10 bg-black/40 inline-flex flex-wrap gap-1">
+        <button
+          type="button"
+          onClick={() => setMode('auto')}
+          className={`px-4 py-2 rounded-xl text-sm transition ${
+            mode === 'auto' ? 'bg-[var(--gold)] text-black' : 'text-white/60 hover:text-white'
+          }`}
+        >
+          Auto · minimal input
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('lab')}
+          className={`px-4 py-2 rounded-xl text-sm transition ${
+            mode === 'lab' ? 'bg-[var(--gold)] text-black' : 'text-white/60 hover:text-white'
+          }`}
+        >
+          Lab · full control
+        </button>
+      </div>
+
+      {/* Station nav — hide deep stations in auto mode */}
       <div className="flex flex-wrap gap-2 mb-6">
-        {LAB_STATIONS.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => setStation(s.id)}
-            className={`px-3 py-2 rounded-full text-xs sm:text-sm transition ${
-              station === s.id
-                ? 'bg-[var(--gold)] text-black'
-                : 'bg-white/5 text-white/60 hover:text-white border border-white/10'
-            }`}
-          >
-            {s.short}
-          </button>
-        ))}
+        {(mode === 'auto' ? LAB_STATIONS.filter((s) => s.id === 'auto' || s.id === 'readiness' || s.id === 'economy') : LAB_STATIONS).map(
+          (s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setStation(s.id)}
+              className={`px-3 py-2 rounded-full text-xs sm:text-sm transition ${
+                station === s.id
+                  ? 'bg-[var(--gold)] text-black'
+                  : 'bg-white/5 text-white/60 hover:text-white border border-white/10'
+              }`}
+            >
+              {s.short}
+            </button>
+          )
+        )}
       </div>
 
       <div className="mb-4 text-xs text-white/45">
         {LAB_STATIONS.find((s) => s.id === station)?.purpose}
       </div>
+
+      {/* AUTO / MINIMAL */}
+      {station === 'auto' && (
+        <div className="space-y-4">
+          <div className="p-4 rounded-2xl border border-[var(--gold)]/30 bg-[var(--gold)]/5 text-sm text-white/70 leading-relaxed">
+            <strong className="text-[var(--gold)]">Auto mode</strong> is the fast path: title +
+            logline (and optional concept) → we build a treatment synopsis and a full shot list for
+            you. You can still open Lab stations anytime for script, prompts, and direction.
+            <br />
+            <span className="text-white/50">
+              Not the same as Berserker — Berserker only turns creative intensity up. Auto is about
+              less typing.
+            </span>
+          </div>
+          <Field label="Title">
+            <input
+              className="lab-input"
+              value={project.title}
+              onChange={(e) => onUpdate((p) => ({ ...p, title: e.target.value }))}
+              placeholder="Project title"
+            />
+          </Field>
+          <Field label="Logline (required — one sentence)">
+            <textarea
+              className="lab-input min-h-[80px]"
+              value={project.logline}
+              onChange={(e) => onUpdate((p) => ({ ...p, logline: e.target.value }))}
+              placeholder="What is this film in one sharp sentence?"
+            />
+          </Field>
+          <Field label="Concept (optional — Auto can invent from logline)">
+            <textarea
+              className="lab-input min-h-[80px]"
+              value={project.concept || ''}
+              onChange={(e) => onUpdate((p) => ({ ...p, concept: e.target.value }))}
+              placeholder="Optional high-level vision…"
+            />
+          </Field>
+          {mediaCount > 0 && (
+            <div className="text-xs text-amber-300/90 border border-amber-400/30 rounded-xl px-3 py-2">
+              You already have {mediaCount} frame/clip(s). Auto rebuild keeps them on matching shot
+              numbers when possible — and will ask before replacing the shot list.
+            </div>
+          )}
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={onRunAutoBuild}
+              className="btn-gold text-black text-sm px-6 py-3 rounded-2xl"
+            >
+              Build treatment + shot list for me
+            </button>
+            <button type="button" onClick={onGoStoryboard} className="btn-outline text-sm px-5 py-3 rounded-2xl">
+              Open shot list
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('lab')}
+              className="btn-outline text-sm px-5 py-3 rounded-2xl"
+            >
+              Switch to full Lab
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* WORLD */}
       {station === 'world' && (

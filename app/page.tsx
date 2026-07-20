@@ -847,6 +847,8 @@ export default function MovieDirector() {
       berserker: newProject.berserker,
       shots: createShotsFromTreatment(treatment.shots),
       characters: [],
+      // New projects start in Auto (minimal). Switch to Lab in the LAB tab for full control.
+      generationSettings: { workflowMode: 'auto' as const, defaultQuality: 'draft' as const },
     };
 
     toast.loading('Saving project to the cloud…', { id: 'create-project' });
@@ -872,7 +874,7 @@ export default function MovieDirector() {
       setProjects((prev) => [project, ...prev.filter((p) => !String(p.id).startsWith('demo-'))]);
       setSelectedProjectId(project.id);
       setCurrentView('workspace');
-      setActiveTab('storyboard');
+      setActiveTab('treatment'); // LAB — Auto mode by default
       setShowNewModal(false);
       setNewProject({ title: '', type: 'film', concept: '', logline: '', styleHint: '', berserker: false });
 
@@ -950,20 +952,72 @@ export default function MovieDirector() {
     toast.success('Signed out');
   }
 
+  /**
+   * When rebuilding a shot list, keep frames/clips/dialogue/prompts from the old
+   * list by shot order so "regenerate" never looks like a full project wipe.
+   */
+  function preserveMediaOntoNewShots(oldShots: Shot[], newShots: Shot[]): Shot[] {
+    return newShots.map((ns, i) => {
+      const old = oldShots[i];
+      if (!old) return ns;
+      return {
+        ...ns,
+        imageUrl: old.imageUrl,
+        videoUrl: old.videoUrl,
+        dialogue: ns.dialogue || old.dialogue,
+        framePromptOverride: old.framePromptOverride,
+        videoPromptOverride: old.videoPromptOverride,
+        lockedFramePrompt: old.lockedFramePrompt,
+        lockedVideoPrompt: old.lockedVideoPrompt,
+        characterIds: ns.characterIds?.length ? ns.characterIds : old.characterIds,
+        caption: old.caption,
+        voiceoverScript: old.voiceoverScript,
+      };
+    });
+  }
+
+  function mediaShotCount(shots: Shot[] = []) {
+    return shots.filter((s) => s.imageUrl || s.videoUrl).length;
+  }
+
+  /**
+   * REGENERATE FULL TREATMENT
+   * Rewrites synopsis + shot list from title/logline/type templates.
+   * Does NOT delete: script, world bible, cast, style, prompts, or media (media re-attached by order).
+   */
   function regenerateTreatment() {
     if (!selectedProject) return;
+    const media = mediaShotCount(selectedProject.shots);
+    const ok = confirm(
+      media > 0
+        ? `Regenerate Full Treatment replaces the SYNOPSIS and SHOT LIST with a fresh template for “${selectedProject.title}”.\n\n` +
+            `Your ${media} existing frame/clip(s) will be re-attached to the new shots by order when possible.\n` +
+            `Lab fields (script, world, cast, prompts) are kept.\n\nContinue?`
+        : `Regenerate Full Treatment replaces the SYNOPSIS and SHOT LIST with a fresh template from your title + logline + format.\n\n` +
+            `Lab fields (script, world, cast, prompts) are kept. Continue?`
+    );
+    if (!ok) return;
+
     const treatment = DEFAULT_TREATMENTS[selectedProject.type](
-      selectedProject.title, 
-      selectedProject.logline, 
+      selectedProject.title,
+      selectedProject.logline,
       selectedProject.berserker
     );
-    updateProject(p => ({
+    const fresh = createShotsFromTreatment(treatment.shots);
+    const shots = preserveMediaOntoNewShots(selectedProject.shots, fresh);
+    updateProject((p) => ({
       ...p,
       synopsis: treatment.synopsis,
-      shots: createShotsFromTreatment(treatment.shots),
+      shots,
+      // never clear lab / media vault fields
     }));
     setActiveTab('storyboard');
-    toast.success("Fresh breakdown. Same soul.");
+    toast.success('Treatment rebuilt', {
+      description:
+        media > 0
+          ? `Synopsis + shot list refreshed. ${media} media item(s) re-attached by order.`
+          : 'Synopsis + shot list refreshed from title & logline. Lab/cast unchanged.',
+    });
   }
 
   // === STORYBOARD GENERATION ===
@@ -983,25 +1037,45 @@ export default function MovieDirector() {
     toast("New shot added. Make it count.");
   }
 
+  /**
+   * AI GENERATE SHOT LIST FROM LAB
+   * Builds a structured shot list from concept (or logline). Replaces shot list only.
+   * Keeps lab fields; re-attaches existing media by order.
+   */
   function generateFullShotListFromConcept() {
-    if (!selectedProject || !selectedProject.concept) {
-      toast.error("Add a Project Concept first for AI-assisted shot list generation.");
+    if (!selectedProject) return;
+    const concept =
+      selectedProject.concept?.trim() ||
+      selectedProject.logline?.trim() ||
+      selectedProject.script?.trim()?.slice(0, 200);
+    if (!concept) {
+      toast.error('Add a logline or concept first (Auto mode or World station).');
       return;
     }
 
-    // Simulate the pro workflow: AI breaks concept into numbered detailed shots
-    const concept = selectedProject.concept;
-    const numShots = selectedProject.type === 'commercial' ? 6 : (selectedProject.type === 'sitcom' ? 8 : 12);
+    const media = mediaShotCount(selectedProject.shots);
+    const ok = confirm(
+      media > 0
+        ? `AI Generate Shot List replaces your SHOT LIST using the lab concept/logline.\n\n` +
+            `Your ${media} frame/clip(s) will be re-attached by shot order when possible.\n` +
+            `Synopsis, script, cast, and world bible are NOT deleted.\n\nContinue?`
+        : `AI Generate Shot List builds a new SHOT LIST from your concept/logline.\n\n` +
+            `Does not delete script, cast, world bible, or synopsis. Continue?`
+    );
+    if (!ok) return;
+
+    const numShots =
+      selectedProject.type === 'commercial' ? 6 : selectedProject.type === 'sitcom' ? 8 : 12;
 
     const baseShots = Array.from({ length: numShots }, (_, i) => {
       const num = i + 1;
       return {
-        description: `Shot ${num}: Key moment drawn from concept — ${concept.slice(0, 60)}...`,
-        camera: i % 3 === 0 ? "Wide establishing" : (i % 2 === 0 ? "Medium tracking" : "Intimate close-up"),
+        description: `Shot ${num}: Key moment drawn from concept — ${concept.slice(0, 80)}${concept.length > 80 ? '…' : ''}`,
+        camera: i % 3 === 0 ? 'Wide establishing' : i % 2 === 0 ? 'Medium tracking' : 'Intimate close-up',
         duration: 4 + (i % 4),
-        emotion: "Stoic intensity building to emotional release",
-        actingCues: "Subtle micro-expressions, controlled breathing",
-        cameraDetailed: "Slow push or measured pan with purpose",
+        emotion: 'Stoic intensity building to emotional release',
+        actingCues: 'Subtle micro-expressions, controlled breathing',
+        cameraDetailed: 'Slow push or measured pan with purpose',
       };
     });
 
@@ -1016,9 +1090,62 @@ export default function MovieDirector() {
       cameraDetailed: s.cameraDetailed,
     }));
 
-    updateProject(p => ({ ...p, shots: newShots }));
+    const shots = preserveMediaOntoNewShots(selectedProject.shots, newShots);
+    updateProject((p) => ({
+      ...p,
+      concept: p.concept || concept,
+      shots,
+    }));
     setActiveTab('storyboard');
-    toast.success(`Generated ${numShots} structured shots from your concept. Refine each with advanced cues.`);
+    toast.success(`Shot list rebuilt (${numShots} shots)`, {
+      description:
+        media > 0
+          ? 'Media re-attached by order. Script, cast, and lab fields kept.'
+          : 'Refine dialogue and cues, then generate frames.',
+    });
+  }
+
+  /**
+   * Auto / minimal mode: one click treatment + shot list from title + logline.
+   * Same safety as regenerate — never silent-wipe media.
+   */
+  function runAutoBuild() {
+    if (!selectedProject) return;
+    if (!selectedProject.logline?.trim() && !selectedProject.concept?.trim()) {
+      toast.error('Add a logline (or concept) first — Auto needs at least one sentence.');
+      return;
+    }
+    const media = mediaShotCount(selectedProject.shots);
+    if (media > 0) {
+      const ok = confirm(
+        `Auto Build will refresh synopsis + shot list from title/logline.\n` +
+          `Your ${media} frame/clip(s) stay attached by order. Script & cast stay.\n\nContinue?`
+      );
+      if (!ok) return;
+    }
+
+    const logline = selectedProject.logline?.trim() || selectedProject.concept || selectedProject.title;
+    const treatment = DEFAULT_TREATMENTS[selectedProject.type](
+      selectedProject.title,
+      logline,
+      selectedProject.berserker
+    );
+    const fresh = createShotsFromTreatment(treatment.shots);
+    const shots = preserveMediaOntoNewShots(selectedProject.shots, fresh);
+    updateProject((p) => ({
+      ...p,
+      logline: p.logline?.trim() || logline,
+      concept:
+        p.concept?.trim() ||
+        `Auto-built ${p.type} from logline: ${logline}`,
+      synopsis: treatment.synopsis,
+      shots,
+      generationSettings: { ...p.generationSettings, workflowMode: 'auto' },
+    }));
+    setActiveTab('storyboard');
+    toast.success('Auto build complete', {
+      description: 'Treatment + shot list ready. Open ENSEMBLE for cast look, then GENERATE.',
+    });
   }
 
   function updateShot(shotId: string, updates: Partial<Shot>) {
@@ -2937,7 +3064,11 @@ Alternative: Set up Render worker for one-click server-side render.
                   <div className="text-white/50 text-xs">BOARDED</div>
                   <div className="font-mono text-xl tabular-nums tracking-tighter">{completion}%</div>
                 </div>
-                <button onClick={regenerateTreatment} className="btn-outline px-6 py-2 rounded-full flex items-center gap-2 text-sm">
+                <button
+                  onClick={regenerateTreatment}
+                  className="btn-outline px-6 py-2 rounded-full flex items-center gap-2 text-sm"
+                  title="Rebuild synopsis + shot list from title/logline. Confirms first if you have frames/clips."
+                >
                   <Wand2 className="w-4 h-4"/> RE-BREAKDOWN
                 </button>
                 <button onClick={togglePlayback} className="btn-gold flex items-center gap-2 px-7 py-2 rounded-full text-base">
@@ -2983,32 +3114,84 @@ Alternative: Set up Render worker for one-click server-side render.
                   onGoStoryboard={() => setActiveTab('storyboard')}
                   onGoEnsemble={() => setActiveTab('cast')}
                   onGoClips={() => setActiveTab('clips')}
+                  onRunAutoBuild={runAutoBuild}
                 />
 
-                <div className="max-w-5xl mt-10 pt-8 border-t border-white/10">
-                  <div className="text-[10px] tracking-[3px] uppercase text-white/40 mb-3">
-                    Breakdown tools
+                <div className="max-w-5xl mt-10 pt-8 border-t border-white/10 space-y-6">
+                  <div>
+                    <div className="text-[10px] tracking-[3px] uppercase text-white/40 mb-2">
+                      Breakdown tools
+                    </div>
+                    <p className="text-xs text-white/45 mb-4 max-w-2xl">
+                      These only rebuild text structure (synopsis / shot list). They ask before
+                      replacing shots if you already have frames or clips, and they re-attach media by
+                      order. They do <span className="text-white/70">not</span> delete your script,
+                      cast, world bible, or prompts.
+                    </p>
                   </div>
-                  <div className="flex gap-3 flex-wrap mb-4">
-                    <button
-                      onClick={regenerateTreatment}
-                      className="btn-outline px-5 py-2 rounded-xl flex items-center gap-2 text-sm"
-                    >
-                      <Wand2 className="w-4 h-4" /> REGENERATE FULL TREATMENT
-                    </button>
-                    <button
-                      onClick={generateFullShotListFromConcept}
-                      className="btn-gold px-6 py-2 rounded-xl flex items-center gap-2 text-sm text-black"
-                    >
-                      AI GENERATE SHOT LIST FROM LAB
-                    </button>
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="director-card p-5 rounded-2xl space-y-3">
+                      <div className="text-[10px] tracking-widest uppercase text-[var(--gold)]">
+                        What this does
+                      </div>
+                      <div className="font-display text-xl">Regenerate full treatment</div>
+                      <p className="text-sm text-white/55 leading-relaxed">
+                        Rebuilds the <strong className="text-white/80">synopsis</strong> and a{' '}
+                        <strong className="text-white/80">template shot list</strong> from your title,
+                        logline, format, and Berserker flag. Use when the story spine is wrong — not
+                        when you only want to tweak one shot.
+                      </p>
+                      <button
+                        onClick={regenerateTreatment}
+                        className="btn-outline px-5 py-2 rounded-xl flex items-center gap-2 text-sm"
+                      >
+                        <Wand2 className="w-4 h-4" /> REGENERATE FULL TREATMENT
+                      </button>
+                    </div>
+
+                    <div className="director-card p-5 rounded-2xl space-y-3">
+                      <div className="text-[10px] tracking-widest uppercase text-[var(--cyan)]">
+                        What this does
+                      </div>
+                      <div className="font-display text-xl">AI generate shot list from Lab</div>
+                      <p className="text-sm text-white/55 leading-relaxed">
+                        Builds a <strong className="text-white/80">new shot list only</strong> from
+                        your concept/logline (not a full rewrite of the film bible). Keeps synopsis
+                        unless empty. Prefer this after you locked the Lab concept.
+                      </p>
+                      <button
+                        onClick={generateFullShotListFromConcept}
+                        className="btn-gold px-6 py-2 rounded-xl flex items-center gap-2 text-sm text-black"
+                      >
+                        AI GENERATE SHOT LIST FROM LAB
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="director-card p-5 rounded-2xl flex flex-wrap items-start justify-between gap-4">
+                    <div className="max-w-xl">
+                      <div className="text-[10px] tracking-widest uppercase text-white/40 mb-1">
+                        Ensemble (separate tab)
+                      </div>
+                      <div className="font-display text-xl mb-1">What Ensemble means</div>
+                      <p className="text-sm text-white/55 leading-relaxed">
+                        Ensemble is your <strong className="text-white/80">look + cast studio</strong>
+                        : Style DNA, character design (Persona Forge), repertory company, and Voice
+                        Lab. It saves style and characters on <em>this project</em> (and Company in
+                        browser storage). It does <strong className="text-white/80">not</strong> save
+                        or auto-run every phase of the film — LAB → SHOT LIST → GENERATE still own
+                        those steps.
+                      </p>
+                    </div>
                     <button
                       onClick={() => setActiveTab('cast')}
-                      className="btn-outline px-5 py-2 rounded-xl text-sm"
+                      className="btn-outline px-5 py-2 rounded-xl text-sm shrink-0"
                     >
-                      ENSEMBLE →
+                      Open Ensemble →
                     </button>
                   </div>
+
                   {selectedProject.synopsis && (
                     <div className="director-card p-6 rounded-3xl text-sm leading-relaxed whitespace-pre-line text-white/80">
                       <div className="text-[10px] tracking-widest uppercase text-white/40 mb-2">
@@ -3017,9 +3200,10 @@ Alternative: Set up Render worker for one-click server-side render.
                       {selectedProject.synopsis}
                     </div>
                   )}
-                  <div className="mt-6 text-xs text-white/40">
-                    Lab workflow: World bible → Script control → Character direction → Continuity →
-                    Shot list → Style + refs → Generate → Assemble. Everything stays on MovieDirector.
+                  <div className="text-xs text-white/40">
+                    Paths: <span className="text-white/60">Auto</span> (minimal) or{' '}
+                    <span className="text-white/60">Lab</span> (full) → Shot list → Ensemble (looks) →
+                    Generate. Berserker = wilder creative tone only.
                   </div>
                 </div>
               </div>
@@ -3040,7 +3224,11 @@ Alternative: Set up Render worker for one-click server-side render.
                     <button onClick={() => setActiveTab('treatment')} className="btn-outline px-4 py-2 rounded-full text-sm">
                       ← LAB
                     </button>
-                    <button onClick={generateFullShotListFromConcept} className="btn-outline px-4 py-2 rounded-full text-sm flex items-center gap-1">
+                    <button
+                      onClick={generateFullShotListFromConcept}
+                      className="btn-outline px-4 py-2 rounded-full text-sm flex items-center gap-1"
+                      title="Rebuild shot list from concept/logline. Asks first if you have media. Keeps script & cast."
+                    >
                       <Wand2 className="w-4 h-4"/> AI GENERATE FROM LAB
                     </button>
                     <button onClick={addNewShot} className="btn-gold flex items-center gap-2 px-6 py-2.5 rounded-full text-sm text-black">
@@ -3223,6 +3411,18 @@ Alternative: Set up Render worker for one-click server-side render.
             {/* ENSEMBLE ATELIER — Style DNA + Persona Forge + The Company + Voice Lab */}
             {activeTab === 'cast' && (
               <div className="max-w-5xl">
+                <div className="mb-8 p-5 rounded-3xl border border-white/10 bg-black/40">
+                  <div className="text-[10px] tracking-[3px] uppercase text-[var(--gold)] mb-1">
+                    Ensemble Atelier
+                  </div>
+                  <div className="font-display text-3xl tracking-tight mb-2">Look + cast — not the whole pipeline</div>
+                  <p className="text-sm text-white/55 max-w-2xl leading-relaxed">
+                    Style DNA (how the world looks), Persona Forge (characters), The Company (reuse cast
+                    across projects), Voice Lab (original voice direction). Changes save on this
+                    project via autosave. They do not replace LAB planning or GENERATE — and they do
+                    not wipe your shot list or clips.
+                  </p>
+                </div>
                 <EnsembleStudio
                   project={selectedProject}
                   token={token}
@@ -3619,7 +3819,8 @@ curl -X POST /api/generate/batch \\
                       <div>
                         <div className="font-semibold">BERSERKER MODE — UNCHAINED</div>
                         <div className="text-sm text-white/60">
-                          Remove all creative guardrails. Wild ideas. Maximum ambition. No taste limits.
+                          Creative intensity only (wilder prompts & tone). Not the same as Auto mode —
+                          Auto is “minimal typing → build shot list.” Berserker is “max ambition.”
                         </div>
                       </div>
                     </div>
