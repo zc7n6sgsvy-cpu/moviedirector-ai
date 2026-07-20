@@ -16,10 +16,7 @@ export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
 
-  // Fallback one-time key for emergency founder grant (remove after use if desired)
-  const FALLBACK = 'md-ops-yrt-dollar-2026-07-20';
-  const allowed = (opsKey && bearer === opsKey) || bearer === FALLBACK;
-  if (!allowed) {
+  if (!opsKey || bearer !== opsKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
