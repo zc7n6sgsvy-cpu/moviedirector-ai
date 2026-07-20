@@ -263,7 +263,7 @@ export function applyMarketingPlanToProject(
         [kit.visualLaws, kit.tone && `Tone: ${kit.tone}`, kit.never && `Never: ${kit.never}`]
           .filter(Boolean)
           .join('. ') ||
-        project.style?.description,
+        'Brand-consistent marketing film',
     },
     worldBible: {
       ...project.worldBible,
