@@ -1,8 +1,8 @@
 import { CREDIT_COSTS, videoCreditsForDuration, imageCredits } from '@/lib/plans';
 
-/** Internal COGS estimate (xAI) — used for ops visibility only. */
-const COST_PER_SECOND_USD = 0.06;
-const COST_PER_IMAGE_USD = 0.04;
+/** Internal COGS estimate (xAI list) — ops visibility + UI honesty. */
+const COST_PER_SECOND_USD = 0.05; // grok-imagine-video list
+const COST_PER_IMAGE_USD = 0.02; // grok-imagine-image list
 
 /** User-facing list price proxy when buying credits à la carte (~$0.10/credit). */
 export const CREDIT_LIST_USD = 0.1;

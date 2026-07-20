@@ -138,3 +138,62 @@ export async function generateImage(prompt: string, aspectRatio = '16:9'): Promi
   if (!url) throw new Error('No image URL returned from xAI');
   return { url };
 }
+
+/** Built-in xAI TTS voice ids (original performers — not celebrity clones). */
+export const XAI_TTS_VOICES = [
+  { id: 'ara', label: 'Ara', hint: 'Warm, clear' },
+  { id: 'eve', label: 'Eve', hint: 'Bright, expressive' },
+  { id: 'leo', label: 'Leo', hint: 'Grounded, male-leaning' },
+  { id: 'rex', label: 'Rex', hint: 'Deep, steady' },
+  { id: 'sal', label: 'Sal', hint: 'Soft, intimate' },
+] as const;
+
+export type GenerateSpeechInput = {
+  text: string;
+  voice?: string;
+  /** Optional performance direction prepended as speech tags when supported */
+  styleHint?: string;
+};
+
+/**
+ * xAI Text-to-Speech → audio bytes (mp3).
+ * @see https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
+ */
+export async function generateSpeech(input: GenerateSpeechInput): Promise<{
+  buffer: Buffer;
+  contentType: string;
+}> {
+  const text = input.text.trim();
+  if (!text) throw new Error('text required for speech');
+
+  const voice = input.voice || 'ara';
+  const body: Record<string, unknown> = {
+    text: input.styleHint ? `${input.styleHint} ${text}` : text,
+    voice,
+    format: 'mp3',
+  };
+
+  const response = await fetch('https://api.x.ai/v1/tts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getApiKey()}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    let message = 'Speech generation failed';
+    try {
+      const err = await response.json();
+      message = err?.error?.message || err?.error || message;
+    } catch {
+      message = (await response.text()) || message;
+    }
+    throw new Error(message);
+  }
+
+  const contentType = response.headers.get('content-type') || 'audio/mpeg';
+  const arrayBuffer = await response.arrayBuffer();
+  return { buffer: Buffer.from(arrayBuffer), contentType };
+}

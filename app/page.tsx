@@ -34,6 +34,19 @@ import {
   extractAssetsFromProjects,
   type RecoveredAsset,
 } from '@/lib/media-recovery';
+import {
+  imageCreditsFor,
+  videoCreditsFor,
+  type GenQuality,
+} from '@/lib/gen-economy';
+import { insertTransitionAfter, isTransitionShot } from '@/lib/transitions';
+import {
+  appendCharacterFact,
+  insertCharacterOnAllShots,
+  removeCharacterFromAllShots,
+} from '@/lib/character-memory';
+import { XAI_TTS_VOICES } from '@/lib/xai';
+import { speechCredits } from '@/lib/plans';
 
 const PROJECT_TYPES = SHARED_PROJECT_TYPES;
 
@@ -211,6 +224,8 @@ export default function MovieDirector() {
   const [userSearch, setUserSearch] = useState('');
   const [searchResults, setSearchResults] = useState<{ id: string; username: string; displayName: string }[]>([]);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'error'>('idle');
+  /** Draft = cheap iteration; Final = publish-ready (default draft so mistakes cost less) */
+  const [genQuality, setGenQuality] = useState<GenQuality>('draft');
   const genPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Public pricing catalog (no auth)
@@ -1171,6 +1186,23 @@ export default function MovieDirector() {
     return generateFramePromptLib(selectedProject, shot);
   }
 
+  function frameCreditCost(shot: Shot): number {
+    return imageCreditsFor(genQuality, !!shot.imageUrl);
+  }
+
+  function videoCreditCost(shot: Shot): number {
+    return videoCreditsFor(shot.duration || 8, genQuality, !!shot.videoUrl);
+  }
+
+  function confirmSpend(kind: 'frame' | 'video' | 'speech', credits: number, detail: string): boolean {
+    if (credits <= 0) return true;
+    return confirm(
+      `${kind === 'frame' ? 'Generate frame' : kind === 'video' ? 'Generate video' : 'Generate voice'}\n\n` +
+        `Mode: ${genQuality.toUpperCase()}${kind !== 'speech' && credits < (kind === 'frame' ? 8 : 80) ? ' (cheaper / retake)' : ''}\n` +
+        `Cost: ${credits} credits\n${detail}\n\nPlan free in LAB first — spend only when the shot is locked.\nContinue?`
+    );
+  }
+
   async function generateFrame(shotId: string) {
     const shot = selectedProject?.shots.find(s => s.id === shotId);
     if (!shot || !selectedProject) return;
@@ -1192,12 +1224,36 @@ export default function MovieDirector() {
       return;
     }
 
-    toast.loading('Generating frame with Grok Imagine…', { id: `gen-img-${shotId}` });
+    const cost = frameCreditCost(shot);
+    if (
+      !confirmSpend(
+        'frame',
+        cost,
+        shot.imageUrl
+          ? 'Retake: half price because this shot already has a frame.'
+          : genQuality === 'draft'
+            ? 'Draft: cheap look test. Switch to Final when locked.'
+            : 'Final quality still.'
+      )
+    ) {
+      return;
+    }
+
+    toast.loading(
+      `Generating ${genQuality} frame (−${cost} cr)…`,
+      { id: `gen-img-${shotId}` }
+    );
     try {
       const res = await fetch('/api/generate/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ prompt, projectId: selectedProject.id, shotId }),
+        body: JSON.stringify({
+          prompt,
+          projectId: selectedProject.id,
+          shotId,
+          quality: genQuality,
+          aspectRatio: selectedProject.generationSettings?.aspectRatio || '16:9',
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -1209,9 +1265,11 @@ export default function MovieDirector() {
         throw new Error(data.error || 'Image generation failed');
       }
       const nextShots = selectedProject.shots.map((s) =>
-        s.id === shotId ? { ...s, imageUrl: data.imageUrl as string } : s
+        s.id === shotId
+          ? { ...s, imageUrl: data.imageUrl as string, lastFrameQuality: genQuality }
+          : s
       );
-      updateShot(shotId, { imageUrl: data.imageUrl });
+      updateShot(shotId, { imageUrl: data.imageUrl, lastFrameQuality: genQuality });
       // Persist immediately — don't rely on debounced autosave surviving a hard refresh
       void forceSaveProject({ ...selectedProject, shots: nextShots });
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
@@ -1225,7 +1283,7 @@ export default function MovieDirector() {
         data.freeSample
           ? 'Free First Cut frame ready'
           : data.creditsCharged
-            ? `Frame ready (−${data.creditsCharged} cr)`
+            ? `Frame ready (−${data.creditsCharged} cr${data.isRetake ? ', retake' : ''})`
             : 'Frame generated',
         { id: `gen-img-${shotId}` }
       );
@@ -1282,7 +1340,22 @@ export default function MovieDirector() {
           ? 'reference-to-video'
           : 'text-to-video';
 
-    toast.loading('Generating Grok video clip…', { id: `gen-vid-${shotId}` });
+    const cost = videoCreditCost(shot);
+    if (
+      !confirmSpend(
+        'video',
+        cost,
+        shot.videoUrl
+          ? 'Retake: half price. Draft clips are shorter (max 5s) to save budget.'
+          : genQuality === 'draft'
+            ? 'Draft clip (max 5s). Final when the motion is locked.'
+            : `Final ${shot.duration || 8}s clip.`
+      )
+    ) {
+      return;
+    }
+
+    toast.loading(`Generating ${genQuality} clip (−${cost} cr)…`, { id: `gen-vid-${shotId}` });
     try {
       const res = await fetch('/api/generate/video', {
         method: 'POST',
@@ -1296,6 +1369,7 @@ export default function MovieDirector() {
           mode,
           projectId: selectedProject.id,
           shotId,
+          quality: genQuality,
         }),
       });
       const data = await res.json();
@@ -1308,9 +1382,11 @@ export default function MovieDirector() {
         throw new Error(data.error || 'Video generation failed');
       }
       const nextShots = selectedProject.shots.map((s) =>
-        s.id === shotId ? { ...s, videoUrl: data.videoUrl as string } : s
+        s.id === shotId
+          ? { ...s, videoUrl: data.videoUrl as string, lastVideoQuality: genQuality }
+          : s
       );
-      updateShot(shotId, { videoUrl: data.videoUrl });
+      updateShot(shotId, { videoUrl: data.videoUrl, lastVideoQuality: genQuality });
       void forceSaveProject({ ...selectedProject, shots: nextShots });
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
       if (data.firstCut) {
@@ -1323,7 +1399,7 @@ export default function MovieDirector() {
         data.freeSample
           ? 'Free First Cut clip ready'
           : data.creditsCharged
-            ? `Clip ready (−${data.creditsCharged} cr)`
+            ? `Clip ready (−${data.creditsCharged} cr${data.isRetake ? ', retake' : ''})`
             : 'Video clip ready',
         { id: `gen-vid-${shotId}` }
       );
@@ -1520,6 +1596,118 @@ export default function MovieDirector() {
       ? current.filter(id => id !== charId) 
       : [...current, charId];
     updateShot(shotId, { characterIds: next });
+  }
+
+  /** Insert a planning bridge still between this shot and the next (free until you gen). */
+  function addTransitionAfter(shotId: string) {
+    if (!selectedProject) return;
+    const idx = selectedProject.shots.findIndex((s) => s.id === shotId);
+    if (idx < 0 || idx >= selectedProject.shots.length - 1) {
+      toast.error('Need a following shot to bridge into.');
+      return;
+    }
+    updateProject((p) => ({
+      ...p,
+      shots: insertTransitionAfter(p.shots, idx),
+    }));
+    toast.success('Transition bridge plate inserted', {
+      description:
+        'Generate a cheap DRAFT frame to test continuity, animate to a short bridge clip, then drop still-only bridges at AI render.',
+    });
+  }
+
+  function insertCharacterEverywhere(charId: string) {
+    updateProject((p) => ({
+      ...p,
+      shots: insertCharacterOnAllShots(p.shots, charId),
+    }));
+    toast.success('Character tagged on all shots (memory + insertion).');
+  }
+
+  function removeCharacterEverywhere(charId: string) {
+    updateProject((p) => ({
+      ...p,
+      shots: removeCharacterFromAllShots(p.shots, charId),
+    }));
+    toast.message('Character removed from all shots.');
+  }
+
+  function addCharacterMemoryFact(charId: string, fact: string) {
+    updateProject((p) => ({
+      ...p,
+      characters: (p.characters || []).map((c) =>
+        c.id === charId ? appendCharacterFact(c, fact) : c
+      ),
+    }));
+  }
+
+  async function generateTtsForShot(shotId: string) {
+    const shot = selectedProject?.shots.find((s) => s.id === shotId);
+    if (!shot || !selectedProject) return;
+    const text = (shot.voiceoverScript || shot.dialogue || '').trim();
+    if (!text) {
+      toast.error('Write a VO line or dialogue first.');
+      return;
+    }
+    if (!token || !isValidObjectId(selectedProject.id)) {
+      toast.error('Sign in with a cloud project to generate studio voice.');
+      setShowAuthModal(true);
+      return;
+    }
+    const cost = speechCredits();
+    if (!confirmSpend('speech', cost, 'xAI TTS line. Browser Speak stays free for previews.')) return;
+
+    const cast = (selectedProject.characters || []).filter((c) =>
+      shot.characterIds?.includes(c.id)
+    );
+    const voice =
+      cast[0]?.ttsVoiceId ||
+      cast[0]?.activeVoiceId ||
+      'ara';
+    // Map custom variant ids to nearest built-in TTS voice if needed
+    const ttsVoice =
+      XAI_TTS_VOICES.find((v) => v.id === voice)?.id ||
+      XAI_TTS_VOICES[0].id;
+    const styleHint = cast[0]
+      ? `[as ${cast[0].name}] ${cast[0].directionNotes || cast[0].personality || ''}`.slice(0, 120)
+      : undefined;
+
+    toast.loading(`Generating voice (−${cost} cr)…`, { id: `tts-${shotId}` });
+    try {
+      const res = await fetch('/api/generate/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          text,
+          voice: ttsVoice,
+          styleHint,
+          projectId: selectedProject.id,
+          shotId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_CREDITS') {
+          toast.dismiss(`tts-${shotId}`);
+          handleGenPaywall(data);
+          return;
+        }
+        throw new Error(data.error || 'TTS failed');
+      }
+      const nextShots = selectedProject.shots.map((s) =>
+        s.id === shotId ? { ...s, voiceAudioUrl: data.audioUrl as string } : s
+      );
+      updateShot(shotId, { voiceAudioUrl: data.audioUrl });
+      void forceSaveProject({ ...selectedProject, shots: nextShots });
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      toast.success(`Voice ready (−${data.creditsCharged ?? cost} cr)`, { id: `tts-${shotId}` });
+      if (data.audioUrl) {
+        const a = new Audio(data.audioUrl);
+        a.play().catch(() => {});
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'TTS failed', { id: `tts-${shotId}` });
+    }
   }
 
   function enhancePromptWithCharacters(basePrompt: string, shot: Shot): string {
@@ -1793,7 +1981,11 @@ export default function MovieDirector() {
       const res = await fetch('/api/render', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ projectId: project.id }),
+        body: JSON.stringify({
+          projectId: project.id,
+          dropStillBridges: true,
+          aiAssemble: true,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Render failed to start');
@@ -3217,10 +3409,29 @@ Alternative: Set up Render worker for one-click server-side render.
                     <div className="text-sm text-white/60">STORYBOARD / SHOT LIST — {selectedProject.shots.length} SHOTS • ONE CONSISTENT WORLD</div>
                     <div className="font-display text-4xl tracking-tight">Every frame must earn its place.</div>
                     <p className="text-xs text-white/45 mt-1 max-w-xl">
-                      Dialogue lines come from LAB → Script Control (“Push script → shot dialogue”) or edit per shot below.
+                      Planner edge: lock dialogue, cast tags, and transitions here before spending.
+                      Use DRAFT to test looks; FINAL when sure. Retakes are half price.
                     </p>
                   </div>
-                  <div className="flex gap-2 flex-wrap">
+                  <div className="flex gap-2 flex-wrap items-center">
+                    <div className="flex rounded-full border border-white/15 p-0.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setGenQuality('draft')}
+                        className={`px-3 py-1.5 rounded-full ${genQuality === 'draft' ? 'bg-[var(--gold)] text-black' : 'text-white/60'}`}
+                        title="Cheap iteration — shorter video, lower credit cost"
+                      >
+                        DRAFT
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGenQuality('final')}
+                        className={`px-3 py-1.5 rounded-full ${genQuality === 'final' ? 'bg-[var(--gold)] text-black' : 'text-white/60'}`}
+                        title="Publish-ready quality — full credit rate"
+                      >
+                        FINAL
+                      </button>
+                    </div>
                     <button onClick={() => setActiveTab('treatment')} className="btn-outline px-4 py-2 rounded-full text-sm">
                       ← LAB
                     </button>
@@ -3250,7 +3461,14 @@ Alternative: Set up Render worker for one-click server-side render.
                               <div className="text-[10px] uppercase tracking-widest text-white/50">NO FRAME YET</div>
                             </div>
                           )}
-                          <div className="absolute top-3 left-3 px-3 py-px text-xs font-mono bg-black/70 text-white rounded">SHOT {shot.number}</div>
+                          <div className="absolute top-3 left-3 px-3 py-px text-xs font-mono bg-black/70 text-white rounded">
+                            {isTransitionShot(shot) ? `BRIDGE ${shot.number}` : `SHOT ${shot.number}`}
+                          </div>
+                          {isTransitionShot(shot) && (
+                            <div className="absolute bottom-3 left-3 text-[9px] px-2 py-px bg-[var(--gold)]/90 text-black rounded tracking-widest">
+                              TRANSITION
+                            </div>
+                          )}
                           {shot.videoUrl && <div className="absolute top-3 right-3 text-[10px] px-2 py-px bg-[var(--cyan)]/90 text-black rounded tracking-widest">CLIP</div>}
                         </div>
 
@@ -3352,11 +3570,35 @@ Alternative: Set up Render worker for one-click server-side render.
                             </div>
                           )}
 
-                          <div className="flex gap-2 mt-auto">
-                            <button onClick={() => generateFrame(shot.id)} className="flex-1 btn-outline text-xs py-2 rounded-xl">GENERATE FRAME</button>
-                            <button onClick={() => generateVideoClip(shot.id)} disabled={!shot.imageUrl} className="flex-1 btn-outline text-xs py-2 rounded-xl disabled:opacity-40">ANIMATE TO VIDEO</button>
+                          <div className="text-[9px] text-white/40 mb-1 font-mono">
+                            Frame {frameCreditCost(shot)} cr · Clip {videoCreditCost(shot)} cr · {genQuality}
+                            {shot.imageUrl || shot.videoUrl ? ' · retake half if regenerating' : ''}
+                          </div>
+                          <div className="flex gap-2 mt-auto flex-wrap">
+                            <button onClick={() => generateFrame(shot.id)} className="flex-1 btn-outline text-xs py-2 rounded-xl min-w-[40%]">
+                              {shot.imageUrl ? 'RETAKE FRAME' : 'GENERATE FRAME'}
+                            </button>
+                            <button onClick={() => generateVideoClip(shot.id)} disabled={!shot.imageUrl} className="flex-1 btn-outline text-xs py-2 rounded-xl disabled:opacity-40 min-w-[40%]">
+                              {isTransitionShot(shot)
+                                ? shot.videoUrl
+                                  ? 'RETAKE BRIDGE CLIP'
+                                  : 'ANIMATE BRIDGE'
+                                : shot.videoUrl
+                                  ? 'RETAKE VIDEO'
+                                  : 'ANIMATE TO VIDEO'}
+                            </button>
                             <button onClick={() => deleteShot(shot.id)} className="btn-ghost p-2 text-white/50 hover:text-red-500"><Trash2 className="w-3.5 h-3.5"/></button>
                           </div>
+                          {!isTransitionShot(shot) && (
+                            <button
+                              type="button"
+                              onClick={() => addTransitionAfter(shot.id)}
+                              className="text-[10px] text-[var(--gold)]/80 hover:text-[var(--gold)] mt-1.5 text-left"
+                              title="Insert an in-between plate to plan the cut, then animate a short bridge clip before final render"
+                            >
+                              + Add transition bridge → next shot
+                            </button>
+                          )}
 
                           <button onClick={() => { navigator.clipboard.writeText(getEnhancedFramePrompt(shot)); toast("Full pro prompt copied"); }} className="text-[10px] text-white/50 hover:text-[var(--gold)] mt-1.5 text-left">COPY FULL GROK PROMPT (refs + cues)</button>
 
@@ -3382,9 +3624,14 @@ Alternative: Set up Render worker for one-click server-side render.
                 <div className="mb-8">
                   <div className="uppercase text-xs tracking-[3px] text-[var(--cyan)]">CLIP LAB — FULL AI VIDEO</div>
                   <div className="font-display text-5xl tracking-[-1.5px]">Stills become cinematic motion with Grok video.</div>
-                  <div className="text-xs text-white/50 mt-2">
-                    Est. cost for remaining clips: ${estimateProjectCost(selectedProject.shots).totalUsd.toFixed(2)} 
-                    (at current rates). Batch for efficiency.
+                  <div className="flex flex-wrap items-center gap-3 mt-3">
+                    <div className="flex rounded-full border border-white/15 p-0.5 text-xs">
+                      <button type="button" onClick={() => setGenQuality('draft')} className={`px-3 py-1.5 rounded-full ${genQuality === 'draft' ? 'bg-[var(--gold)] text-black' : 'text-white/60'}`}>DRAFT</button>
+                      <button type="button" onClick={() => setGenQuality('final')} className={`px-3 py-1.5 rounded-full ${genQuality === 'final' ? 'bg-[var(--gold)] text-black' : 'text-white/60'}`}>FINAL</button>
+                    </div>
+                    <span className="text-xs text-white/50">
+                      Remaining batch est: {estimateProjectCost(selectedProject.shots).credits} cr · mode {genQuality}
+                    </span>
                   </div>
                 </div>
                 {selectedProject.shots.filter(s => s.imageUrl).length === 0 && <div className="p-12 border border-white/10 rounded-3xl text-center text-white/50">Generate frames first.</div>}
@@ -3462,12 +3709,82 @@ Alternative: Set up Render worker for one-click server-side render.
                               )}
                             </div>
                           </div>
-                          <div className="mt-3 flex gap-2">
+                          <div className="mt-3 space-y-2">
+                            <div className="text-[10px] uppercase tracking-wider text-white/40">Sitcom memory (always in prompts)</div>
+                            <textarea
+                              className="director-input w-full p-2 text-xs rounded-xl min-h-[52px]"
+                              placeholder="Locked memory: always late, scar on left brow, never removes jacket…"
+                              value={char.memoryNotes || ''}
+                              onChange={(e) =>
+                                updateProject((p) => ({
+                                  ...p,
+                                  characters: (p.characters || []).map((c) =>
+                                    c.id === char.id ? { ...c, memoryNotes: e.target.value } : c
+                                  ),
+                                }))
+                              }
+                            />
+                            {(char.memoryFacts || []).length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {(char.memoryFacts || []).map((f) => (
+                                  <span key={f} className="text-[9px] px-2 py-0.5 rounded-full bg-white/10 text-white/60">
+                                    {f}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            <input
+                              className="director-input w-full p-2 text-xs rounded-xl"
+                              placeholder="Add memory fact + Enter"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const v = (e.target as HTMLInputElement).value.trim();
+                                  if (v) {
+                                    addCharacterMemoryFact(char.id, v);
+                                    (e.target as HTMLInputElement).value = '';
+                                  }
+                                }
+                              }}
+                            />
+                            <div className="text-[10px] uppercase tracking-wider text-white/40 pt-1">TTS voice</div>
+                            <select
+                              className="director-input w-full p-2 text-xs rounded-xl bg-black"
+                              value={char.ttsVoiceId || 'ara'}
+                              onChange={(e) =>
+                                updateProject((p) => ({
+                                  ...p,
+                                  characters: (p.characters || []).map((c) =>
+                                    c.id === char.id ? { ...c, ttsVoiceId: e.target.value } : c
+                                  ),
+                                }))
+                              }
+                            >
+                              {XAI_TTS_VOICES.map((v) => (
+                                <option key={v.id} value={v.id}>
+                                  {v.label} — {v.hint}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
                             <button
                               onClick={() => generateCharacterRef(char.id)}
-                              className="flex-1 btn-outline py-2 rounded-2xl text-xs"
+                              className="flex-1 btn-outline py-2 rounded-2xl text-xs min-w-[40%]"
                             >
                               GENERATE REFERENCE
+                            </button>
+                            <button
+                              onClick={() => insertCharacterEverywhere(char.id)}
+                              className="flex-1 btn-outline py-2 rounded-2xl text-xs min-w-[40%]"
+                              title="Tag this character on every shot for episode continuity"
+                            >
+                              INSERT ON ALL SHOTS
+                            </button>
+                            <button
+                              onClick={() => removeCharacterEverywhere(char.id)}
+                              className="btn-ghost px-3 text-white/50 text-xs"
+                            >
+                              Clear tags
                             </button>
                             <button
                               onClick={() => deleteCharacter(char.id)}
@@ -3480,36 +3797,79 @@ Alternative: Set up Render worker for one-click server-side render.
                       ))}
                     </div>
                     <p className="text-[11px] text-white/40 mt-3">
-                      Tag characters on Storyboard shots so every Grok frame/clip keeps their look + voice direction.
+                      Character memory + shot tags drive sitcom consistency. Tag on Storyboard or insert
+                      on all shots. Voice Lab alts shape performance briefs; TTS voices speak lines.
                     </p>
                   </div>
                 )}
               </div>
             )}
 
-            {/* VOICEOVERS — Full AI audio layer */}
+            {/* VOICEOVERS — browser preview + xAI TTS studio voices */}
             {activeTab === 'voice' && (
               <div className="max-w-3xl">
                 <div className="mb-6">
                   <div className="uppercase tracking-[3px] text-xs text-[var(--violet)]">VOICEOVER STUDIO</div>
                   <div className="text-5xl font-display tracking-tight">Every shot can speak.</div>
+                  <p className="text-sm text-white/50 mt-2 max-w-xl">
+                    Free: browser play for timing. Paid: xAI TTS studio lines ({speechCredits()} cr) with
+                    original voices. Custom character voices live in ENSEMBLE → Voice Lab (axes + alts);
+                    TTS maps to studio voice IDs below.
+                  </p>
+                </div>
+
+                <div className="mb-6 p-4 rounded-2xl border border-white/10 bg-black/40">
+                  <div className="text-[10px] tracking-widest uppercase text-white/40 mb-2">Studio TTS voices (original)</div>
+                  <div className="flex flex-wrap gap-2">
+                    {XAI_TTS_VOICES.map((v) => (
+                      <div key={v.id} className="text-xs px-3 py-1.5 rounded-full border border-white/15 text-white/70">
+                        {v.label} <span className="text-white/40">· {v.hint}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-white/40 mt-2">
+                    Assign a preferred TTS voice on each cast member under production cast cards, or we
+                    default to Ara.
+                  </p>
                 </div>
 
                 {selectedProject.shots.map(shot => (
                   <div key={shot.id} className="director-card p-6 mb-4 rounded-3xl">
-                    <div className="font-mono text-xs mb-1 text-white/50">SHOT {shot.number}</div>
+                    <div className="font-mono text-xs mb-1 text-white/50">
+                      {isTransitionShot(shot) ? 'BRIDGE' : 'SHOT'} {shot.number}
+                    </div>
                     <div className="mb-2 text-white/80">{shot.description}</div>
+                    {shot.dialogue && (
+                      <div className="text-xs text-[var(--gold)]/80 mb-2">Dialogue: “{shot.dialogue}”</div>
+                    )}
 
-                    <textarea value={shot.voiceoverScript || ''} onChange={(e) => updateVoiceover(shot.id, e.target.value)} placeholder="Enter the spoken line here..." className="director-input w-full p-4 rounded-2xl text-sm mb-3" />
+                    <textarea
+                      value={shot.voiceoverScript || ''}
+                      onChange={(e) => updateVoiceover(shot.id, e.target.value)}
+                      placeholder="Spoken line (or leave blank to use dialogue)…"
+                      className="director-input w-full p-4 rounded-2xl text-sm mb-3"
+                    />
 
-                    <div className="flex gap-3">
-                      <button onClick={() => generateVoiceLine(shot.id)} className="btn-outline px-5 py-1.5 text-sm rounded-2xl">GENERATE VO LINE + PROMPT</button>
-                      <button onClick={() => speakVoiceover(shot)} className="btn-gold px-6 py-1.5 text-sm rounded-2xl text-black flex items-center gap-1"><Play className="w-3.5 h-3.5"/> SPEAK (Browser)</button>
+                    {shot.voiceAudioUrl && (
+                      <audio controls src={shot.voiceAudioUrl} className="w-full mb-3 h-10" />
+                    )}
+
+                    <div className="flex flex-wrap gap-3">
+                      <button onClick={() => generateVoiceLine(shot.id)} className="btn-outline px-5 py-1.5 text-sm rounded-2xl">
+                        FILL VO FROM SHOT
+                      </button>
+                      <button onClick={() => speakVoiceover(shot)} className="btn-outline px-5 py-1.5 text-sm rounded-2xl flex items-center gap-1">
+                        <Play className="w-3.5 h-3.5"/> PLAY (free browser)
+                      </button>
+                      <button
+                        onClick={() => generateTtsForShot(shot.id)}
+                        className="btn-gold px-6 py-1.5 text-sm rounded-2xl text-black"
+                      >
+                        GENERATE STUDIO VOICE (−{speechCredits()} cr)
+                      </button>
                     </div>
                   </div>
                 ))}
-
-                <div className="text-xs text-white/50 mt-4">Voiceovers are part of the final cut. Real professional TTS / Grok audio can be attached the same way as video.</div>
               </div>
             )}
 
@@ -3535,10 +3895,18 @@ Alternative: Set up Render worker for one-click server-side render.
                       onClick={() => renderFullMovie(selectedProject)} 
                       disabled={selectedProject.shots.filter(s => s.videoUrl).length < 1}
                       className="btn-gold px-8 py-2 rounded-2xl text-sm text-black flex items-center gap-2 disabled:opacity-40"
+                      title="Drops still-only transition plates, keeps bridge clips, queues AI assemble"
                     >
-                      🎬 RENDER FULL MOVIE
+                      ✨ LET AI RENDER FOR YOU
                     </button>
                   </div>
+                </div>
+
+                <div className="mb-4 p-4 rounded-2xl border border-[var(--gold)]/25 bg-[var(--gold)]/5 text-sm text-white/65 max-w-3xl">
+                  <strong className="text-[var(--gold)]">AI render</strong> stitches your live clips in
+                  order, drops transition stills that were only planning plates, keeps animated bridge
+                  clips, and packages the film (worker when configured, otherwise zip export). Plan in
+                  LAB + SHOT LIST first — render spends nothing on new Grok pixels.
                 </div>
 
                 {/* Cost & Stats Bar — credits first (what users pay) */}
@@ -3562,8 +3930,9 @@ Alternative: Set up Render worker for one-click server-side render.
                     <span className="font-mono text-xl">{selectedProject.shots.filter(s => s.videoUrl).length} / {selectedProject.shots.length}</span>
                   </div>
                   <div className="flex-1 text-xs text-white/50">
-                    Plan: <span className="text-white/80 capitalize">{userPlan}</span>. Image = 8 cr · Video = 10 cr/s.
-                    Failed gens auto-refund. Membership renews monthly credits.
+                    Plan free · Draft cheap · Final when locked · Retakes ½ · Bridges plan cuts before burn.
+                    Image draft {imageCreditsFor('draft')} / final {imageCreditsFor('final')} cr ·
+                    Video draft ~{videoCreditsFor(5, 'draft')} cr (5s) · final 8s {videoCreditsFor(8, 'final')} cr.
                   </div>
                 </div>
 

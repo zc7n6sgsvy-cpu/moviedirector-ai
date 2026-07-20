@@ -7,6 +7,8 @@ export type ProjectType = 'sitcom' | 'film' | 'commercial' | 'anime' | 'brand-fu
 
 export type GenQuality = 'draft' | 'final';
 
+export type ShotKind = 'story' | 'transition';
+
 export interface Shot {
   id: string;
   number: number;
@@ -17,6 +19,8 @@ export interface Shot {
   videoUrl?: string;
   caption?: string;
   voiceoverScript?: string;
+  /** Generated TTS / VO audio URL (Blob or remote) */
+  voiceAudioUrl?: string;
   characterIds?: string[];
 
   // Advanced cinematic controls
@@ -26,6 +30,12 @@ export interface Shot {
   soundCues?: string;
   cameraDetailed?: string;
   styleNotes?: string;
+
+  /** story = narrative beat; transition = bridge plate between story shots */
+  shotKind?: ShotKind;
+  isTransition?: boolean;
+  bridgeFromShotId?: string;
+  bridgeToShotId?: string;
 
   /**
    * Full freeform frame prompt. If set, replaces the auto-built prompt entirely
@@ -92,9 +102,18 @@ export interface Character {
   directionNotes?: string;
   /** Lab: relationship map (free text) */
   relationships?: string;
+  /**
+   * Locked sitcom memory — always re-injected into prompts
+   * (scar, catchphrase, “always late”, etc.)
+   */
+  memoryNotes?: string;
+  /** Discrete memory facts (episode bible bullets) */
+  memoryFacts?: string[];
   voiceAxes?: VoiceAxes;
   voiceVariants?: VoiceVariant[];
   activeVoiceId?: string;
+  /** Preferred xAI TTS voice id when generating spoken lines */
+  ttsVoiceId?: string;
   tags?: string[];
 }
 

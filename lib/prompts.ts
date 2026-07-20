@@ -19,6 +19,8 @@ import {
   composeConceptFromLab,
   applyCharacterDirectionToPrompt,
 } from '@/lib/concept-lab';
+import { injectCastMemoryIntoPrompt } from '@/lib/character-memory';
+import { isTransitionShot, buildBridgeVideoPrompt } from '@/lib/transitions';
 
 export const DEFAULT_TREATMENTS: Record<
   ProjectType,
@@ -72,7 +74,21 @@ function isStylized(project: Project): boolean {
   );
 }
 
-export function generateFramePrompt(project: Project, shot: Shot): string {
+/** Wrap shot body with project master prompt / suffix / negative / director notes. */
+export function applyMasterPromptWrap(body: string, project: Project, raw?: boolean): string {
+  if (raw) return body.trim();
+  const g = project.generationSettings;
+  const parts: string[] = [];
+  if (g?.masterPrompt?.trim()) parts.push(g.masterPrompt.trim());
+  if (g?.directorNotes?.trim()) parts.push(`Director notes: ${g.directorNotes.trim()}`);
+  parts.push(body.trim());
+  if (g?.promptSuffix?.trim()) parts.push(g.promptSuffix.trim());
+  if (g?.negativePrompt?.trim()) parts.push(`Avoid / never: ${g.negativePrompt.trim()}`);
+  return parts.filter(Boolean).join(' ');
+}
+
+/** Auto-built frame prompt (before master wrap / overrides). */
+export function buildAutoFramePrompt(project: Project, shot: Shot): string {
   if (!project) return '';
 
   const styleDesc = project.berserker
@@ -128,7 +144,23 @@ export function generateFramePrompt(project: Project, shot: Shot): string {
   return `${base} ${quality} ${typeFlavor} Ultra high resolution, masterpiece frame, coherent original world. No copyrighted characters.`;
 }
 
-export function generateVideoPrompt(project: Project, shot: Shot): string {
+/**
+ * Resolve the actual frame prompt sent to Grok.
+ * Priority: framePromptOverride → lockedFramePrompt → auto-build, then master wrap.
+ */
+export function generateFramePrompt(project: Project, shot: Shot): string {
+  if (!project) return '';
+  const override = shot.framePromptOverride?.trim();
+  let body = override
+    ? override
+    : shot.lockedFramePrompt?.trim()
+      ? shot.lockedFramePrompt.trim()
+      : buildAutoFramePrompt(project, shot);
+  body = injectCastMemoryIntoPrompt(project, shot, body);
+  return applyMasterPromptWrap(body, project, shot.rawPrompt);
+}
+
+export function buildAutoVideoPrompt(project: Project, shot: Shot): string {
   if (!project) return '';
 
   const styleDesc = project.berserker
@@ -194,6 +226,28 @@ export function generateVideoPrompt(project: Project, shot: Shot): string {
   prompt += 'Coherent original world across shots. Native audio with lip sync. No copyrighted characters.';
 
   return prompt;
+}
+
+export function generateVideoPrompt(project: Project, shot: Shot): string {
+  if (!project) return '';
+  if (isTransitionShot(shot) && !shot.videoPromptOverride?.trim() && !shot.lockedVideoPrompt?.trim()) {
+    const from = (project.shots || []).find((s) => s.id === shot.bridgeFromShotId);
+    const to = (project.shots || []).find((s) => s.id === shot.bridgeToShotId);
+    const bridge = buildBridgeVideoPrompt(project, shot, from, to);
+    return applyMasterPromptWrap(
+      injectCastMemoryIntoPrompt(project, shot, bridge),
+      project,
+      shot.rawPrompt
+    );
+  }
+  const override = shot.videoPromptOverride?.trim();
+  let body = override
+    ? override
+    : shot.lockedVideoPrompt?.trim()
+      ? shot.lockedVideoPrompt.trim()
+      : buildAutoVideoPrompt(project, shot);
+  body = injectCastMemoryIntoPrompt(project, shot, body);
+  return applyMasterPromptWrap(body, project, shot.rawPrompt);
 }
 
 export function generateCharacterRefPrompt(

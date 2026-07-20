@@ -2,12 +2,7 @@ import mongoose from 'mongoose';
 import User, { type IUser, type PlanId } from '@/models/User';
 import Project from '@/models/Project';
 import UsageEvent, { type UsageEventType } from '@/models/UsageEvent';
-import {
-  getPlan,
-  imageCredits,
-  videoCreditsForDuration,
-  type PlanId as CatalogPlanId,
-} from '@/lib/plans';
+import { getPlan, type PlanId as CatalogPlanId } from '@/lib/plans';
 import {
   FIRST_CUT_FREE_IMAGES,
   FIRST_CUT_FREE_VIDEOS,
@@ -15,6 +10,14 @@ import {
   TRIAL_PLAN,
   TRIAL_CREDITS,
 } from '@/lib/first-cut';
+import {
+  imageCreditsFor,
+  videoCreditsFor,
+  effectiveVideoDuration,
+  type GenQuality,
+} from '@/lib/gen-economy';
+
+export type { GenQuality };
 
 export class InsufficientCreditsError extends Error {
   code = 'INSUFFICIENT_CREDITS' as const;
@@ -207,20 +210,42 @@ export async function grantCredits(
   return user;
 }
 
-export function estimateImageCharge(): number {
-  return imageCredits();
+export function estimateImageCharge(
+  quality: GenQuality = 'final',
+  isRetake = false
+): number {
+  return imageCreditsFor(quality, isRetake);
 }
 
-export function estimateVideoCharge(durationSec: number): number {
-  return videoCreditsForDuration(durationSec);
+export function estimateVideoCharge(
+  durationSec: number,
+  quality: GenQuality = 'final',
+  isRetake = false
+): number {
+  return videoCreditsFor(durationSec, quality, isRetake);
 }
 
 export function estimateBatchVideoCharge(
-  shots: { duration?: number; videoUrl?: string }[]
+  shots: { duration?: number; videoUrl?: string }[],
+  quality: GenQuality = 'final'
 ): number {
   return shots
     .filter((s) => !s.videoUrl)
-    .reduce((sum, s) => sum + videoCreditsForDuration(s.duration || 8), 0);
+    .reduce((sum, s) => sum + videoCreditsFor(s.duration || 8, quality, false), 0);
+}
+
+export { effectiveVideoDuration };
+
+/** Detect retake from stored project shot assets (server-side, not client trust). */
+export function isShotRetake(
+  project: { shots?: Array<{ id?: string; imageUrl?: string; videoUrl?: string }> } | null | undefined,
+  shotId: string | undefined,
+  kind: 'image' | 'video'
+): boolean {
+  if (!shotId || !project?.shots?.length) return false;
+  const shot = project.shots.find((s) => s.id === shotId);
+  if (!shot) return false;
+  return kind === 'image' ? !!shot.imageUrl : !!shot.videoUrl;
 }
 
 export async function assertCanCreateProject(userId: string, currentCount: number): Promise<void> {
@@ -430,9 +455,15 @@ export async function getBillingSnapshot(userId: string) {
               : 'start_trial',
     },
     costs: {
-      imageCredits: imageCredits(),
-      videoCreditsPerSecond: videoCreditsForDuration(1),
-      video8s: videoCreditsForDuration(8),
+      imageCredits: imageCreditsFor('final', false),
+      imageDraft: imageCreditsFor('draft', false),
+      imageRetake: imageCreditsFor('final', true),
+      videoCreditsPerSecond: videoCreditsFor(1, 'final', false),
+      videoDraftPerSecond: videoCreditsFor(1, 'draft', false),
+      video8s: videoCreditsFor(8, 'final', false),
+      video5sDraft: videoCreditsFor(5, 'draft', false),
+      retakeNote: 'Regenerating a shot that already has a frame/clip costs 50%.',
+      freePlanning: true,
     },
     recentUsage: recent.map((e) => ({
       id: e._id.toString(),

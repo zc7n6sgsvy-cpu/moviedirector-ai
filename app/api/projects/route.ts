@@ -20,6 +20,7 @@ const ALLOWED_CREATE_FIELDS = [
   'script',
   'worldBible',
   'continuity',
+  'generationSettings',
   'isFirstCut',
   'firstCutPath',
 ] as const;

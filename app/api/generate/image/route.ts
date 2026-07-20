@@ -10,10 +10,13 @@ import {
   chargeGeneration,
   refundCredits,
   estimateImageCharge,
+  isShotRetake,
+  type GenQuality,
   InsufficientCreditsError,
   FreeSampleExhaustedError,
 } from '@/lib/billing';
 import { getPlan } from '@/lib/plans';
+import Project from '@/models/Project';
 
 export const maxDuration = 120;
 
@@ -41,14 +44,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'XAI_API_KEY not configured on server' }, { status: 503 });
   }
 
-  const { prompt, aspectRatio, projectId, shotId } = await req.json();
+  const body = await req.json();
+  const { prompt, aspectRatio, projectId, shotId } = body;
+  const quality: GenQuality = body.quality === 'draft' ? 'draft' : 'final';
   if (!prompt) return NextResponse.json({ error: 'prompt required' }, { status: 400 });
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });
 
   const access = await verifyProjectAccess(auth.userId, projectId);
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
-  const credits = estimateImageCharge();
+  const projectDoc = await Project.findById(projectId).select('shots').lean();
+  const isRetake = isShotRetake(projectDoc as { shots?: Array<{ id?: string; imageUrl?: string }> }, shotId, 'image');
+  const credits = estimateImageCharge(quality, isRetake);
   let chargedAmount = 0;
   let wasFree = false;
 
@@ -56,6 +63,8 @@ export async function POST(req: NextRequest) {
     const charge = await chargeGeneration(auth.userId, 'image', credits, {
       projectId,
       shotId,
+      metadata: { quality, isRetake },
+      description: `Image ${quality}${isRetake ? ' retake' : ''} (${credits} credits)`,
     });
     chargedAmount = charge.creditsCharged;
     wasFree = charge.free;
@@ -74,6 +83,8 @@ export async function POST(req: NextRequest) {
       persisted: stored.persisted,
       creditsCharged: chargedAmount,
       freeSample: wasFree,
+      quality,
+      isRetake,
       creditBalance: refreshed?.creditBalance ?? null,
       firstCut: {
         freeImagesRemaining: refreshed?.firstCutFreeImagesRemaining,

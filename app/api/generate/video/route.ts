@@ -10,10 +10,14 @@ import {
   chargeGeneration,
   refundCredits,
   estimateVideoCharge,
+  effectiveVideoDuration,
+  isShotRetake,
+  type GenQuality,
   InsufficientCreditsError,
   FreeSampleExhaustedError,
 } from '@/lib/billing';
 import { getPlan } from '@/lib/plans';
+import Project from '@/models/Project';
 
 export const maxDuration = 300;
 
@@ -43,6 +47,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const { prompt, imageUrl, videoUrl, referenceImageUrls, duration, mode, projectId, shotId } = body;
+  const quality: GenQuality = body.quality === 'draft' ? 'draft' : 'final';
 
   if (!prompt) return NextResponse.json({ error: 'prompt required' }, { status: 400 });
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });
@@ -50,7 +55,10 @@ export async function POST(req: NextRequest) {
   const access = await verifyProjectAccess(auth.userId, projectId);
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
-  const credits = estimateVideoCharge(duration || 8);
+  const projectDoc = await Project.findById(projectId).select('shots').lean();
+  const isRetake = isShotRetake(projectDoc as { shots?: Array<{ id?: string; videoUrl?: string }> }, shotId, 'video');
+  const effectiveDuration = effectiveVideoDuration(duration || 8, quality);
+  const credits = estimateVideoCharge(duration || 8, quality, isRetake);
   let chargedAmount = 0;
   let wasFree = false;
 
@@ -58,7 +66,8 @@ export async function POST(req: NextRequest) {
     const charge = await chargeGeneration(auth.userId, 'video', credits, {
       projectId,
       shotId,
-      metadata: { duration: duration || 8, mode },
+      metadata: { duration: effectiveDuration, mode, quality, isRetake },
+      description: `Video ${quality}${isRetake ? ' retake' : ''} ${effectiveDuration}s (${credits} credits)`,
     });
     chargedAmount = charge.creditsCharged;
     wasFree = charge.free;
@@ -68,7 +77,7 @@ export async function POST(req: NextRequest) {
       imageUrl,
       videoUrl,
       referenceImageUrls,
-      duration,
+      duration: effectiveDuration,
       mode,
     });
 
@@ -87,6 +96,9 @@ export async function POST(req: NextRequest) {
       model: result.model,
       creditsCharged: chargedAmount,
       freeSample: wasFree,
+      quality,
+      isRetake,
+      effectiveDuration,
       creditBalance: refreshed?.creditBalance ?? null,
       firstCut: {
         freeImagesRemaining: refreshed?.firstCutFreeImagesRemaining,

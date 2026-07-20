@@ -17,6 +17,7 @@ const ALLOWED_FIELDS = [
   'script',
   'worldBible',
   'continuity',
+  'generationSettings',
   'isPublic',
   'isFirstCut',
   'firstCutPath',

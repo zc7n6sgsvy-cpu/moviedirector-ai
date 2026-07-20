@@ -8,6 +8,11 @@
  *
  * Credits are the unit of generation. ~1 credit ≈ $0.10 list when buying packs;
  * memberships grant credits at a better effective rate to drive upgrades.
+ *
+ * Economy vs free Grok Imagine on X:
+ *  - Lab / prompts / script / cast = FREE (no API burn)
+ *  - Draft gens = cheap iteration; Final = full rate; Retakes = half price
+ *  - See lib/gen-economy.ts
  */
 
 export type PlanId = 'free' | 'creator' | 'pro' | 'studio';
@@ -56,7 +61,8 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     features: [
       'Guided First Cut sample (sitcom / film / commercial / trailer)',
       '3 free frames + 2 free video clips (platform-sponsored)',
-      'Unlimited pre-production: treatment, shots, cast, style',
+      'Unlimited FREE Lab: world, script, master prompts, cast, continuity',
+      'Draft mode + half-price retakes when you fix a shot',
       'Public feed, Social Studio, publish your sample',
       'Then: 7-day Creator trial → paid',
     ],
@@ -76,7 +82,8 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     features: [
       '7-day free trial available after First Cut',
       '500 credits / month included',
-      'Pay-as-you-go top-ups anytime',
+      'Draft gens cheap · final when locked · half-price retakes',
+      'Full prompt control + Lab pre-production (free)',
       'Full episodes + batch generation',
       'Channels (serialized drops)',
     ],
@@ -153,18 +160,37 @@ export const CREDIT_PACKS: CreditPackDefinition[] = [
   },
 ];
 
-/** How many credits each generation action costs. */
+/**
+ * How many credits each generation action costs.
+ * Draft rates subsidize iteration (thinner margin, better retention).
+ * Retakes use retakeMultiplier so mistakes are recoverable.
+ */
 export const CREDIT_COSTS = {
+  /** Final-quality still */
   image: 8,
-  /** Charged per second of requested video duration (min 1s). */
+  /** Draft still — iterate looks without burning the wallet */
+  imageDraft: 3,
+  /** Final video per second of requested duration */
   videoPerSecond: 10,
+  /** Draft video per second (capped shorter in gen-economy) */
+  videoDraftPerSecond: 4,
+  /** Regenerating a shot that already has an asset */
+  retakeMultiplier: 0.5,
+  /** xAI TTS line (~cheap vs video; list rate is $/char) */
+  speech: 2,
 } as const;
 
+export function speechCredits(): number {
+  return CREDIT_COSTS.speech;
+}
+
+/** @deprecated Prefer videoCreditsFor from gen-economy with quality */
 export function videoCreditsForDuration(durationSec: number): number {
   const sec = Math.min(15, Math.max(1, Math.round(durationSec || 8)));
   return sec * CREDIT_COSTS.videoPerSecond;
 }
 
+/** @deprecated Prefer imageCreditsFor from gen-economy with quality */
 export function imageCredits(): number {
   return CREDIT_COSTS.image;
 }
