@@ -15,6 +15,10 @@ import {
   berserkerVoiceTone,
   berserkerCameraCurse,
 } from '@/lib/berserker';
+import {
+  composeConceptFromLab,
+  applyCharacterDirectionToPrompt,
+} from '@/lib/concept-lab';
 
 export const DEFAULT_TREATMENTS: Record<
   ProjectType,
@@ -75,10 +79,13 @@ export function generateFramePrompt(project: Project, shot: Shot): string {
     ? berserkerStyleOverlay(project.style?.description)
     : project.style?.description;
 
-  const projectConcept = project.concept ? `Overall project: ${project.concept}. ` : '';
+  const labConcept = composeConceptFromLab(project.concept, project.worldBible, project.continuity);
+  const projectConcept = labConcept ? `Overall project / lab bible: ${labConcept}. ` : '';
   const styleRef = styleDesc ? `Style: ${styleDesc}. ` : '';
+  const castDirection = applyCharacterDirectionToPrompt(project);
+  const directionRef = castDirection ? `Character direction (lab): ${castDirection}. ` : '';
 
-  let base = `${projectConcept}${styleRef}Key still #${shot.number} from original series "${project.title}". ${shot.description}. Framing: ${shot.camera}.`;
+  let base = `${projectConcept}${styleRef}${directionRef}Key still #${shot.number} from original series "${project.title}". ${shot.description}. Framing: ${shot.camera}.`;
 
   if (shot.cameraDetailed) base += ` Camera direction: ${shot.cameraDetailed}.`;
   else if (project.berserker) {
@@ -86,13 +93,20 @@ export function generateFramePrompt(project: Project, shot: Shot): string {
   }
   if (shot.emotion) base += ` Performance: ${shot.emotion}.`;
   if (shot.actingCues) base += ` Acting: ${shot.actingCues}.`;
-  if (shot.dialogue) base += ` Dialogue: "${shot.dialogue}".`;
+  if (shot.dialogue) base += ` Dialogue (script control): "${shot.dialogue}".`;
   if (shot.soundCues) base += ` Sound design note: ${shot.soundCues}.`;
   if (shot.styleNotes) base += ` Additional style: ${shot.styleNotes}.`;
 
   const chars = (project.characters || []).filter((c) => shot.characterIds?.includes(c.id));
   if (chars.length) {
-    base += ` ORIGINAL characters only (maintain exact likeness from references): ${chars.map(characterPromptBlock).join(' | ')}. `;
+    base += ` ORIGINAL characters only (maintain exact likeness from references): ${chars
+      .map((c) => {
+        const dir = [c.objective && `wants:${c.objective}`, c.directionNotes && `play:${c.directionNotes}`]
+          .filter(Boolean)
+          .join(', ');
+        return `${characterPromptBlock(c)}${dir ? ` [${dir}]` : ''}`;
+      })
+      .join(' | ')}. `;
   }
 
   if (project.berserker) {
@@ -121,10 +135,13 @@ export function generateVideoPrompt(project: Project, shot: Shot): string {
     ? berserkerStyleOverlay(project.style?.description)
     : project.style?.description;
 
-  const projectConcept = project.concept ? `Project vision: ${project.concept}. ` : '';
+  const labConcept = composeConceptFromLab(project.concept, project.worldBible, project.continuity);
+  const projectConcept = labConcept ? `Project vision / lab: ${labConcept}. ` : '';
   const styleRef = styleDesc ? `Style reference: ${styleDesc}. ` : '';
+  const castDirection = applyCharacterDirectionToPrompt(project);
 
   let prompt = `${projectConcept}${styleRef}Animate into a professional ${shot.duration}s clip for original series "${project.title}". `;
+  if (castDirection) prompt += `Character direction from lab: ${castDirection}. `;
 
   prompt += `Action & intent: ${shot.description}. Camera: ${shot.camera}. `;
 
@@ -134,13 +151,20 @@ export function generateVideoPrompt(project: Project, shot: Shot): string {
   }
   if (shot.emotion) prompt += `Emotion & performance: ${shot.emotion}. `;
   if (shot.actingCues) prompt += `Micro acting: ${shot.actingCues}. `;
-  if (shot.dialogue) prompt += `Lip-synced dialogue delivery: "${shot.dialogue}". `;
+  if (shot.dialogue) prompt += `Lip-synced dialogue from script control: "${shot.dialogue}". `;
   if (shot.soundCues) prompt += `Native audio & sound design: ${shot.soundCues}. `;
   if (shot.styleNotes) prompt += `Style notes: ${shot.styleNotes}. `;
 
   const chars = (project.characters || []).filter((c) => shot.characterIds?.includes(c.id));
   if (chars.length > 0) {
-    prompt += `Maintain absolute character consistency with reference images: ${chars.map(characterPromptBlock).join(' | ')}. `;
+    prompt += `Maintain absolute character consistency with reference images: ${chars
+      .map((c) => {
+        const dir = [c.objective && `objective:${c.objective}`, c.directionNotes && `direction:${c.directionNotes}`]
+          .filter(Boolean)
+          .join(', ');
+        return `${characterPromptBlock(c)}${dir ? ` (${dir})` : ''}`;
+      })
+      .join(' | ')}. `;
     const voiceBits = chars
       .map((c) => {
         const variants = c.voiceVariants || [];

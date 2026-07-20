@@ -11,6 +11,12 @@ export interface IProject extends Document {
   berserker: boolean;
   shots: any[];
   characters?: any[];
+  /** Concept Lab: master script / teleplay */
+  script?: string;
+  /** Concept Lab: world bible */
+  worldBible?: Record<string, unknown>;
+  /** Concept Lab: continuity desk */
+  continuity?: Record<string, unknown>;
   isPublic?: boolean;
   isFirstCut?: boolean;
   firstCutPath?: string;
@@ -30,6 +36,9 @@ const ProjectSchema: Schema = new Schema(
     berserker: { type: Boolean, default: false },
     shots: { type: [Schema.Types.Mixed], default: [] },
     characters: { type: [Schema.Types.Mixed], default: [] },
+    script: String,
+    worldBible: Schema.Types.Mixed,
+    continuity: Schema.Types.Mixed,
     isPublic: { type: Boolean, default: false },
     isFirstCut: { type: Boolean, default: false, index: true },
     firstCutPath: { type: String },

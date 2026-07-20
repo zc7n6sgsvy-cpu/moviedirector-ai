@@ -41,10 +41,37 @@ export interface Character {
   signatureProp?: string;
   personality?: string;
   catchphrase?: string;
+  /** Lab: what they want in this episode/film */
+  objective?: string;
+  /** Lab: how they change */
+  arc?: string;
+  /** Lab: director notes — how to play them */
+  directionNotes?: string;
+  /** Lab: relationship map (free text) */
+  relationships?: string;
   voiceAxes?: VoiceAxes;
   voiceVariants?: VoiceVariant[];
   activeVoiceId?: string;
   tags?: string[];
+}
+
+export interface WorldBible {
+  setting?: string;
+  timePeriod?: string;
+  tone?: string;
+  themes?: string;
+  audience?: string;
+  visualLaws?: string;
+  whatNever?: string;
+  northStar?: string;
+}
+
+export interface ContinuityNotes {
+  wardrobeRules?: string;
+  locations?: string;
+  props?: string;
+  timeline?: string;
+  doNotBreak?: string;
 }
 
 export interface StyleTemplate {
@@ -75,6 +102,12 @@ export interface Project {
   berserker: boolean;
   shots: Shot[];
   characters?: Character[];
+  /** Full teleplay / master script (Concept Lab) */
+  script?: string;
+  /** Structured world bible (Concept Lab) */
+  worldBible?: WorldBible;
+  /** Continuity desk notes (Concept Lab) */
+  continuity?: ContinuityNotes;
   isFirstCut?: boolean;
   firstCutPath?: string;
   createdAt: string;

@@ -5,7 +5,21 @@ import { requireAuth } from '@/lib/auth';
 import { serializeDoc } from '@/lib/serialize';
 
 const ALLOWED_FIELDS = [
-  'title', 'type', 'logline', 'concept', 'synopsis', 'style', 'berserker', 'shots', 'characters', 'isPublic',
+  'title',
+  'type',
+  'logline',
+  'concept',
+  'synopsis',
+  'style',
+  'berserker',
+  'shots',
+  'characters',
+  'script',
+  'worldBible',
+  'continuity',
+  'isPublic',
+  'isFirstCut',
+  'firstCutPath',
 ] as const;
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

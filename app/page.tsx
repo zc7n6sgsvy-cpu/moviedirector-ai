@@ -17,6 +17,7 @@ import FirstCutWalkthrough from '@/components/FirstCutWalkthrough';
 import TrialOfferModal from '@/components/TrialOfferModal';
 import ProductTour from '@/components/ProductTour';
 import EnsembleStudio from '@/components/EnsembleStudio';
+import ConceptLaboratory from '@/components/ConceptLaboratory';
 import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
 import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
@@ -630,6 +631,9 @@ export default function MovieDirector() {
             berserker: selectedProject.berserker,
             shots: selectedProject.shots,
             characters: selectedProject.characters,
+            script: selectedProject.script,
+            worldBible: selectedProject.worldBible,
+            continuity: selectedProject.continuity,
           }),
         });
         if (!res.ok) {
@@ -2832,7 +2836,7 @@ Alternative: Set up Render worker for one-click server-side render.
                       ? 'border-[var(--gold)] text-white' 
                       : 'border-transparent text-white/50 hover:text-white/80'}`}
                   >
-                    {tab === 'treatment' && 'CONCEPT'}
+                    {tab === 'treatment' && 'LAB'}
                     {tab === 'storyboard' && 'SHOT LIST'}
                     {tab === 'clips' && 'GENERATE'}
                     {tab === 'cast' && 'ENSEMBLE'}
@@ -2848,44 +2852,54 @@ Alternative: Set up Render worker for one-click server-side render.
 
           {/* TAB CONTENT */}
           <div className="flex-1 max-w-7xl mx-auto px-8 py-9 w-full">
-            {/* TREATMENT / CONCEPT */}
+            {/* CONCEPT LABORATORY — pre-production stations */}
             {activeTab === 'treatment' && (
-              <div className="max-w-3xl">
-                <div className="uppercase text-xs tracking-[3px] text-[var(--gold)] mb-2">PROJECT CONCEPT — HIGH LEVEL VISION</div>
-                {selectedProject.concept ? (
-                  <div onClick={() => {
-                    const newConcept = prompt("Edit Project Concept (high-level vision):", selectedProject.concept) || selectedProject.concept;
-                    updateProject(p => ({...p, concept: newConcept}));
-                  }} className="text-4xl font-display tracking-[-1.5px] mb-6 leading-none pr-8 cursor-pointer hover:text-[var(--gold)]">{selectedProject.concept}</div>
-                ) : (
-                  <div className="text-3xl text-white/60 italic mb-6">Add a high-level concept in project settings for AI shot list generation.</div>
-                )}
+              <div>
+                <ConceptLaboratory
+                  project={selectedProject}
+                  onUpdate={updateProject}
+                  onGoStoryboard={() => setActiveTab('storyboard')}
+                  onGoEnsemble={() => setActiveTab('cast')}
+                  onGoClips={() => setActiveTab('clips')}
+                />
 
-                {selectedProject.style && (
-                  <div className="mb-6">
-                    <div className="uppercase text-xs tracking-[3px] text-[var(--cyan)] mb-1">STYLE TEMPLATE (enforces one consistent world)</div>
-                    <div className="text-xl text-[var(--cyan)]">{selectedProject.style.description}</div>
+                <div className="max-w-5xl mt-10 pt-8 border-t border-white/10">
+                  <div className="text-[10px] tracking-[3px] uppercase text-white/40 mb-3">
+                    Breakdown tools
                   </div>
-                )}
-
-                <div className="uppercase text-xs tracking-[3px] text-[var(--gold)] mb-2 mt-4">THE LOGLINE</div>
-                <div className="text-5xl font-display tracking-[-2px] mb-8 leading-none pr-8">{selectedProject.logline}</div>
-
-                <div className="flex gap-3 mb-6 flex-wrap">
-                  <button onClick={regenerateTreatment} className="btn-outline px-5 py-2 rounded-xl flex items-center gap-2 text-sm">
-                    <Wand2 className="w-4 h-4"/> REGENERATE FULL TREATMENT
-                  </button>
-                  <button onClick={generateFullShotListFromConcept} className="btn-gold px-6 py-2 rounded-xl flex items-center gap-2 text-sm text-black">
-                    AI GENERATE SHOT LIST FROM CONCEPT
-                  </button>
-                  <button onClick={() => setActiveTab('cast')} className="btn-outline px-5 py-2 rounded-xl text-sm">MANAGE REFERENCES →</button>
+                  <div className="flex gap-3 flex-wrap mb-4">
+                    <button
+                      onClick={regenerateTreatment}
+                      className="btn-outline px-5 py-2 rounded-xl flex items-center gap-2 text-sm"
+                    >
+                      <Wand2 className="w-4 h-4" /> REGENERATE FULL TREATMENT
+                    </button>
+                    <button
+                      onClick={generateFullShotListFromConcept}
+                      className="btn-gold px-6 py-2 rounded-xl flex items-center gap-2 text-sm text-black"
+                    >
+                      AI GENERATE SHOT LIST FROM LAB
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('cast')}
+                      className="btn-outline px-5 py-2 rounded-xl text-sm"
+                    >
+                      ENSEMBLE →
+                    </button>
+                  </div>
+                  {selectedProject.synopsis && (
+                    <div className="director-card p-6 rounded-3xl text-sm leading-relaxed whitespace-pre-line text-white/80">
+                      <div className="text-[10px] tracking-widest uppercase text-white/40 mb-2">
+                        Current treatment / synopsis
+                      </div>
+                      {selectedProject.synopsis}
+                    </div>
+                  )}
+                  <div className="mt-6 text-xs text-white/40">
+                    Lab workflow: World bible → Script control → Character direction → Continuity →
+                    Shot list → Style + refs → Generate → Assemble. Everything stays on MovieDirector.
+                  </div>
                 </div>
-
-                <div className="director-card p-9 rounded-3xl text-[15px] leading-relaxed whitespace-pre-line text-white/90">
-                  {selectedProject.synopsis}
-                </div>
-
-                <div className="mt-8 text-xs text-white/40">This follows the exact professional workflow: Concept → Detailed Shot List → Style + Character References → Advanced Per-Shot Prompts → Batch Generation → Assembly.</div>
               </div>
             )}
 
@@ -2896,10 +2910,16 @@ Alternative: Set up Render worker for one-click server-side render.
                   <div>
                     <div className="text-sm text-white/60">STORYBOARD / SHOT LIST — {selectedProject.shots.length} SHOTS • ONE CONSISTENT WORLD</div>
                     <div className="font-display text-4xl tracking-tight">Every frame must earn its place.</div>
+                    <p className="text-xs text-white/45 mt-1 max-w-xl">
+                      Dialogue lines come from LAB → Script Control (“Push script → shot dialogue”) or edit per shot below.
+                    </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={() => setActiveTab('treatment')} className="btn-outline px-4 py-2 rounded-full text-sm">
+                      ← LAB
+                    </button>
                     <button onClick={generateFullShotListFromConcept} className="btn-outline px-4 py-2 rounded-full text-sm flex items-center gap-1">
-                      <Wand2 className="w-4 h-4"/> AI GENERATE FROM CONCEPT
+                      <Wand2 className="w-4 h-4"/> AI GENERATE FROM LAB
                     </button>
                     <button onClick={addNewShot} className="btn-gold flex items-center gap-2 px-6 py-2.5 rounded-full text-sm text-black">
                       <Plus className="w-4 h-4"/> ADD SHOT
@@ -2940,6 +2960,19 @@ Alternative: Set up Render worker for one-click server-side render.
 
                           <div className="text-xs text-white/60 mb-2 font-mono">{shot.camera} • {shot.duration}s</div>
 
+                          {/* Script control — dialogue always editable (from Lab or inline) */}
+                          <div className="mb-2">
+                            <div className="text-[9px] uppercase tracking-wider text-[var(--gold)]/80 mb-1">
+                              Dialogue / script line
+                            </div>
+                            <textarea
+                              className="director-input w-full p-2 text-xs rounded min-h-[52px] leading-snug"
+                              placeholder="CHARACTER: What they say — push from LAB → Script, or write here"
+                              value={shot.dialogue || ''}
+                              onChange={(e) => updateAdvancedShot(shot.id, 'dialogue', e.target.value)}
+                            />
+                          </div>
+
                           {/* Advanced Per-Shot Prompting (Pro workflow) */}
                           {editingShotId === shot.id ? (
                             <div className="space-y-2 mb-3 text-[10px]">
@@ -2957,12 +2990,6 @@ Alternative: Set up Render worker for one-click server-side render.
                               />
                               <input 
                                 className="director-input w-full p-1 text-xs rounded" 
-                                placeholder="Dialogue with delivery" 
-                                value={shot.dialogue || ''} 
-                                onChange={e => updateAdvancedShot(shot.id, 'dialogue', e.target.value)} 
-                              />
-                              <input 
-                                className="director-input w-full p-1 text-xs rounded" 
                                 placeholder="Detailed camera (FAST ZOOM into CLOSEUP...)" 
                                 value={shot.cameraDetailed || ''} 
                                 onChange={e => updateAdvancedShot(shot.id, 'cameraDetailed', e.target.value)} 
@@ -2975,13 +3002,29 @@ Alternative: Set up Render worker for one-click server-side render.
                               />
                             </div>
                           ) : (
-                            (shot.emotion || shot.dialogue || shot.cameraDetailed) && (
+                            (shot.emotion || shot.cameraDetailed || shot.actingCues) && (
                               <div className="mb-2 text-[9px] text-white/50 space-y-0.5">
                                 {shot.emotion && <div>Emotion: {shot.emotion}</div>}
-                                {shot.dialogue && <div>Dialogue: “{shot.dialogue}”</div>}
+                                {shot.actingCues && <div>Acting: {shot.actingCues}</div>}
                                 {shot.cameraDetailed && <div>Cam: {shot.cameraDetailed}</div>}
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingShotId(shot.id)}
+                                  className="text-[var(--gold)]/70 hover:text-[var(--gold)]"
+                                >
+                                  Edit cues →
+                                </button>
                               </div>
                             )
+                          )}
+                          {editingShotId !== shot.id && !(shot.emotion || shot.cameraDetailed || shot.actingCues) && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingShotId(shot.id)}
+                              className="text-[9px] text-white/40 hover:text-[var(--gold)] mb-2 text-left"
+                            >
+                              + Emotion, acting, camera cues
+                            </button>
                           )}
 
                           {/* Character consistency tags */}

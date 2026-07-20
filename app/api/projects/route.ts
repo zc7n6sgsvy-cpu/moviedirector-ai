@@ -17,6 +17,9 @@ const ALLOWED_CREATE_FIELDS = [
   'berserker',
   'shots',
   'characters',
+  'script',
+  'worldBible',
+  'continuity',
   'isFirstCut',
   'firstCutPath',
 ] as const;
