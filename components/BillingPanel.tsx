@@ -13,6 +13,7 @@ type PlanCard = {
   maxProjects: number;
   features: string[];
   highlighted?: boolean;
+  episodePromise?: string;
 };
 
 type PackCard = {
@@ -41,7 +42,10 @@ type BillingAccount = {
     video8s: number;
     video5sDraft?: number;
     video8sRetake?: number;
+    draft5s?: number;
     newcomerHint?: string;
+    episodeNote?: string;
+    pureFinalMinutesCreator?: number;
   };
   firstCut?: {
     status: string;
@@ -281,27 +285,30 @@ export default function BillingPanel({
               <div className="font-mono text-3xl">{account.lifetimeCreditsUsed}</div>
             </div>
             <div>
-              <div className="text-xs text-white/50">USAGE RATES (don’t panic)</div>
+              <div className="text-xs text-white/50">USAGE RATES</div>
               <div className="text-sm text-white/70 mt-1 space-y-0.5">
                 <div>
                   <span className="text-white/40">Draft</span> image {account.costs.imageDraft ?? 1} cr · 5s clip{' '}
-                  {account.costs.video5sDraft ?? 5} cr
+                  {account.costs.video5sDraft ?? account.costs.draft5s ?? 5} cr
                 </div>
                 <div>
                   <span className="text-white/40">Final</span> image {account.costs.imageCredits} cr · 8s clip{' '}
                   {account.costs.video8s} cr ({account.costs.videoCreditsPerSecond} cr/s)
                 </div>
                 <div className="text-white/40 text-xs">
-                  Retakes ½ price · Lab planning always free
+                  Retakes ½ · plan free forever
                 </div>
               </div>
             </div>
           </div>
-          {account.costs.newcomerHint && (
-            <p className="mt-4 text-xs text-white/50 border border-white/10 rounded-xl px-3 py-2 leading-relaxed">
-              {account.costs.newcomerHint}
+          <div className="mt-4 p-3 rounded-xl border border-[var(--gold)]/25 bg-[var(--gold)]/5 text-xs text-white/70 leading-relaxed space-y-1">
+            <div className="text-[10px] tracking-widest uppercase text-[var(--gold)]">Episode reality check</div>
+            <p>
+              {(account.costs as { episodeNote?: string }).episodeNote ||
+                'Grok video costs real money per second. Membership buys a finished-minute budget — not infinite X-style play.'}
             </p>
-          )}
+            {account.costs.newcomerHint && <p className="text-white/50">{account.costs.newcomerHint}</p>}
+          </div>
           {!account.paymentsReady && (
             <div className="mt-4 text-xs text-amber-400/90 border border-amber-400/30 rounded-xl px-3 py-2">
               Stripe not fully configured on this deployment. Plans & packs show correctly; checkout
@@ -346,6 +353,9 @@ export default function BillingPanel({
               )}
               <div className="font-display text-2xl">{plan.name}</div>
               <div className="text-white/50 text-sm mt-1 min-h-[40px]">{plan.tagline}</div>
+              {plan.episodePromise && (
+                <div className="text-[11px] text-[var(--gold)]/90 mt-2 leading-snug">{plan.episodePromise}</div>
+              )}
               <div className="mt-4 mb-4">
                 <span className="font-mono text-3xl">
                   {plan.priceMonthlyUsd === 0 ? '$0' : `$${plan.priceMonthlyUsd}`}

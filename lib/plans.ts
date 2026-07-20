@@ -1,16 +1,24 @@
 /**
- * MovieDirector.ai — commercial plan catalog.
+ * MovieDirector.ai — plan catalog (episode-honest).
  *
- * Pricing philosophy (director rush, not fleecing):
- *  - xAI COGS is real (~$0.02/image, ~$0.05/sec video). We cannot be free-unlimited.
- *  - New users must finish a small film feeling proud — not broke after two 8s clips.
- *  - Credits are sized so DRAFT testing is cheap and FINAL is intentional.
- *  - Membership includes enough volume for a cold open / short, not six lonely clips.
+ * User goal: 15-min sitcom episodes. Physics: xAI video ≈ $0.05/sec.
+ *   15 min pure final ≈ $45 API   |  25 min pure ≈ $75 API
+ *   $39 fee cannot buy 25 min continuous Grok video without losing money.
  *
- * Rough COGS check (final video @ 3 cr/s, Creator $39 / 1000 cr ≈ $0.039/cr):
- *  - 8s final ≈ 24 cr ≈ $0.94 user vs ~$0.40 xAI → healthy if average use is moderate
- *  - Draft 5s ≈ 5 cr ≈ $0.20 user vs ~$0.25 COGS → thin/loss leader for retention
+ * What we promise instead (see lib/episode-economy.ts):
+ *   Creator $39  — short episode / cold open cycle: ~8–12 min finished video,
+ *                  hybrid assemble can feel like 12–15 min with stills + VO.
+ *   Pro $99      — one 15-min episode class with retake buffer.
+ *   Studio $299  — 2–3× 15-min episodes.
+ *
+ * Credits meter usage; the fee is the real budget. We size credits so maxing
+ * final video ≈ break-even on COGS for that tier (thin margin, high retention).
  */
+
+import {
+  episodePromiseForPrice,
+  pureFinalSecondsAtBreakEven,
+} from '@/lib/episode-economy';
 
 export type PlanId = 'free' | 'creator' | 'pro' | 'studio';
 
@@ -21,19 +29,17 @@ export interface PlanDefinition {
   name: string;
   tagline: string;
   priceMonthlyUsd: number;
-  /** Credits granted every billing cycle (or once on signup for free). */
   monthlyCredits: number;
-  /** One-time signup grant (free tier). */
   signupCredits: number;
   maxProjects: number;
   features: string[];
   highlighted?: boolean;
-  /** Stripe Price ID env key — resolved at runtime from process.env */
   stripePriceEnv: string | null;
-  /** Soft rate limits (generations per hour) on top of credits. */
   genVideoPerHour: number;
   genImagePerHour: number;
   genBatchPerHour: number;
+  /** Honest product promise for billing UI */
+  episodePromise?: string;
 }
 
 export interface CreditPackDefinition {
@@ -45,23 +51,46 @@ export interface CreditPackDefinition {
   bestValue?: boolean;
 }
 
+/**
+ * Credit costs — keep final video low enough that included minutes match fee.
+ * 2 cr/s final → 1 min final = 120 cr. Creator 1500 cr ≈ 12.5 min pure final.
+ */
+export const CREDIT_COSTS = {
+  image: 2,
+  imageDraft: 1,
+  videoPerSecond: 2,
+  videoDraftPerSecond: 1,
+  retakeMultiplier: 0.5,
+  speech: 1,
+} as const;
+
+/** Credits to cover ~break-even pure final seconds at current video rate. */
+function creditsForBreakEvenFinal(planUsd: number, buffer = 1.05): number {
+  const secs = pureFinalSecondsAtBreakEven(planUsd);
+  return Math.round(secs * CREDIT_COSTS.videoPerSecond * buffer);
+}
+
+const creatorPromise = episodePromiseForPrice(39);
+const proPromise = episodePromiseForPrice(99);
+const studioPromise = episodePromiseForPrice(299);
+
 export const PLANS: Record<PlanId, PlanDefinition> = {
   free: {
     id: 'free',
     name: 'Free Director',
-    tagline: 'First Cut free. Full studio for planning. No card.',
+    tagline: 'Plan free. Sample real Grok. No card.',
     priceMonthlyUsd: 0,
     monthlyCredits: 0,
     signupCredits: 0,
     maxProjects: 5,
     features: [
-      'Guided First Cut sample — real Grok frames + clips, on us',
-      '5 free frames + 3 free video clips (platform-sponsored)',
-      'Unlimited FREE Lab: plan until it feels right',
-      'Draft mode cheap · retakes half price',
-      'Publish your sample to the feed',
-      'Then: 7-day Creator trial with real volume',
+      'First Cut sample: 5 free frames + 3 free clips (on us)',
+      'Unlimited free Lab — plan the whole episode before you spend',
+      'Draft mode · half-price retakes · cast memory',
+      'Publish sample to the feed',
+      'Then trial with real episode volume',
     ],
+    episodePromise: 'Sample only — then trial for volume',
     stripePriceEnv: null,
     genVideoPerHour: 4,
     genImagePerHour: 12,
@@ -70,129 +99,112 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   creator: {
     id: 'creator',
     name: 'Creator',
-    tagline: 'Finish a cold open. Feel like a director.',
+    tagline: 'Ship a short episode every month.',
     priceMonthlyUsd: 39,
-    /** ~40 final 8s clips OR ~200 draft 5s tests — enough for a short sitcom cycle */
-    monthlyCredits: 1000,
+    /**
+     * ~12.5 min pure final at 2 cr/s, or ~8–9 min with heavy editing waste.
+     * Hybrid sitcom assemble (stills + VO + bridges) can feel like 12–15 min.
+     * NOT 25 min continuous Grok video — that alone is ~$75 API.
+     */
+    monthlyCredits: Math.max(1500, creditsForBreakEvenFinal(39, 1.0)),
     signupCredits: 0,
     maxProjects: 25,
     features: [
       '7-day free trial after First Cut',
-      '1,000 credits / month included',
-      '≈ 40 final 8s clips · or hundreds of draft tests',
-      'Draft cheap · final when locked · half-price retakes',
-      'Full Lab + Ensemble cast memory',
-      'Channels (serialized drops)',
+      `${Math.max(1500, creditsForBreakEvenFinal(39, 1.0)).toLocaleString()} credits / month`,
+      creatorPromise.headline,
+      'Plan free → DRAFT cheap → FINAL on hero shots only',
+      'Cast memory + transitions + voice — sitcom toolkit',
+      'Honest limit: not 25 min of pure regen video',
     ],
+    episodePromise: creatorPromise.headline,
     highlighted: true,
     stripePriceEnv: 'STRIPE_PRICE_CREATOR',
-    genVideoPerHour: 30,
-    genImagePerHour: 80,
-    genBatchPerHour: 8,
+    genVideoPerHour: 40,
+    genImagePerHour: 100,
+    genBatchPerHour: 10,
   },
   pro: {
     id: 'pro',
     name: 'Pro',
-    tagline: 'Weekly drops. Agency pace.',
+    tagline: 'One full 15-minute episode class / month.',
     priceMonthlyUsd: 99,
-    monthlyCredits: 3500,
+    /** 15 min pure ≈ $45; with 1.5× waste ≈ $67.50 — fits $99 with margin */
+    monthlyCredits: Math.max(4000, creditsForBreakEvenFinal(99, 1.15)),
     signupCredits: 0,
     maxProjects: 100,
     features: [
-      '3,500 credits / month included',
-      '≈ 2+ minutes of final video / mo at full rate',
-      'Best credit rate on top-ups',
-      '100 projects · hard batch generation',
-      'Early access to new Grok modes',
+      `${Math.max(4000, creditsForBreakEvenFinal(99, 1.15)).toLocaleString()} credits / month`,
+      proPromise.headline,
+      'Retake buffer for a real 15-min cut',
+      'Best top-up rate · hard batch gen',
+      '100 projects · weekly drop pace',
     ],
+    episodePromise: proPromise.headline,
     stripePriceEnv: 'STRIPE_PRICE_PRO',
-    genVideoPerHour: 60,
-    genImagePerHour: 150,
-    genBatchPerHour: 15,
+    genVideoPerHour: 80,
+    genImagePerHour: 200,
+    genBatchPerHour: 20,
   },
   studio: {
     id: 'studio',
     name: 'Studio',
-    tagline: 'Production volume. Serious partners.',
+    tagline: '2–3 full episodes. Series volume.',
     priceMonthlyUsd: 299,
-    monthlyCredits: 12000,
+    monthlyCredits: Math.max(12000, creditsForBreakEvenFinal(299, 1.1)),
     signupCredits: 0,
     maxProjects: 500,
     features: [
-      '12,000 credits / month included',
-      'Highest generation throughput',
-      '500 projects',
-      'Dedicated success path',
-      'Custom invoice / annual (contact)',
+      `${Math.max(12000, creditsForBreakEvenFinal(299, 1.1)).toLocaleString()} credits / month`,
+      studioPromise.headline,
+      'Series / channel production volume',
+      'Highest throughput · success path',
+      'Custom / annual invoicing (contact)',
     ],
+    episodePromise: studioPromise.headline,
     stripePriceEnv: 'STRIPE_PRICE_STUDIO',
-    genVideoPerHour: 120,
-    genImagePerHour: 300,
-    genBatchPerHour: 30,
+    genVideoPerHour: 150,
+    genImagePerHour: 400,
+    genBatchPerHour: 40,
   },
 };
 
-/**
- * Top-up packs — slightly better $/credit than pure list so power users stay.
- * Stripe prices stay the same; more credits = better effective rate.
- */
 export const CREDIT_PACKS: CreditPackDefinition[] = [
   {
     id: 'pack_200',
     name: 'Starter Pack',
-    credits: 400,
+    /** ~3+ min final top-up */
+    credits: 500,
     priceUsd: 19,
     stripePriceEnv: 'STRIPE_PRICE_PACK_200',
   },
   {
     id: 'pack_1000',
-    name: 'Director Pack',
-    credits: 2000,
+    name: 'Episode Pack',
+    /** Roughly another short episode of final */
+    credits: 2500,
     priceUsd: 79,
     stripePriceEnv: 'STRIPE_PRICE_PACK_1000',
     bestValue: true,
   },
   {
     id: 'pack_5000',
-    name: 'Studio Pack',
-    credits: 10000,
+    name: 'Series Pack',
+    credits: 12000,
     priceUsd: 299,
     stripePriceEnv: 'STRIPE_PRICE_PACK_5000',
   },
 ];
 
-/**
- * User-facing credit costs — tuned for "director rush" not sticker shock.
- *
- * Old (punishing): image 8, video 10/s → 8s = 80 cr → Creator 500 = ~6 clips.
- * New: draft is almost free to try; final is intentional but finishable.
- */
-export const CREDIT_COSTS = {
-  /** Final still */
-  image: 2,
-  /** Draft still — look tests */
-  imageDraft: 1,
-  /** Final video per second (8s = 24 cr) */
-  videoPerSecond: 3,
-  /** Draft video per second, capped shorter (5s = 5 cr) */
-  videoDraftPerSecond: 1,
-  /** Regenerating a shot that already has an asset */
-  retakeMultiplier: 0.5,
-  /** xAI TTS line */
-  speech: 1,
-} as const;
-
 export function speechCredits(): number {
   return CREDIT_COSTS.speech;
 }
 
-/** @deprecated Prefer videoCreditsFor from gen-economy with quality */
 export function videoCreditsForDuration(durationSec: number): number {
   const sec = Math.min(15, Math.max(1, Math.round(durationSec || 8)));
   return sec * CREDIT_COSTS.videoPerSecond;
 }
 
-/** @deprecated Prefer imageCreditsFor from gen-economy with quality */
 export function imageCredits(): number {
   return CREDIT_COSTS.image;
 }
@@ -212,11 +224,9 @@ export function resolveStripePriceId(envKey: string | null | undefined): string 
   return val && val.length > 0 ? val : null;
 }
 
-/** Human "what can I make" lines for billing UI. */
 export function planVolumeCopy(planId: PlanId): string {
   const p = getPlan(planId);
-  if (p.monthlyCredits <= 0) return 'Plan free forever · First Cut gens sponsored';
-  const final8s = Math.floor(p.monthlyCredits / (CREDIT_COSTS.videoPerSecond * 8));
-  const draft5s = Math.floor(p.monthlyCredits / (CREDIT_COSTS.videoDraftPerSecond * 5));
-  return `≈ ${final8s} final 8s clips · or ≈ ${draft5s} draft 5s tests / month`;
+  if (p.monthlyCredits <= 0) return 'Plan free forever · First Cut sponsored';
+  const finalMin = Math.round((p.monthlyCredits / CREDIT_COSTS.videoPerSecond / 60) * 10) / 10;
+  return p.episodePromise || `≈ ${finalMin} min pure final video / mo if spent only on clips`;
 }

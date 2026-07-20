@@ -1045,11 +1045,12 @@ export default function MovieDirector() {
         ? "UNCHAINED SHOT — Invent the most insane, beautiful, or deranged thing that serves the story."
         : "New shot. Describe exactly what we need to see and feel.",
       camera: "To be directed",
-      duration: 8,
+      // Default 5s — sitcom economy: more shots, less pure-minute burn per beat
+      duration: 5,
     };
     updateProject(p => ({ ...p, shots: [...p.shots, newShot] }));
     setEditingShotId(newShot.id);
-    toast("New shot added. Make it count.");
+    toast("New shot added (5s default — stretch the episode).");
   }
 
   /**

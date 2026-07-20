@@ -467,7 +467,12 @@ export async function getBillingSnapshot(userId: string) {
       retakeNote: 'Regenerating a shot that already has a frame/clip costs 50%.',
       freePlanning: true,
       newcomerHint:
-        'Stay on DRAFT while exploring. Final 8s is intentional — plan free first so every credit lands.',
+        'Stay on DRAFT while exploring. Final is for hero shots. A 15-min sitcom is hybrid: plan free, short shots, stills + VO — not 15 min of continuous regen.',
+      episodeNote:
+        'xAI video ≈ $0.05/s. Pure 15 min ≈ $45 API; pure 25 min ≈ $75. Creator $39 targets ~8–12 min finished (+ hybrid cut). Pro $99 ≈ one 15-min episode class. Studio ≈ 2–3.',
+      final8s: videoCreditsFor(8, 'final', false),
+      draft5s: videoCreditsFor(5, 'draft', false),
+      pureFinalMinutesCreator: Math.round((getPlan('creator').monthlyCredits / 2 / 60) * 10) / 10,
     },
     recentUsage: recent.map((e) => ({
       id: e._id.toString(),
