@@ -12,38 +12,38 @@ export interface IProject extends Document {
   shots: any[];
   characters?: any[];
   isPublic?: boolean;
-  /** Free guided sample project — generations can use First Cut free allowance. */
   isFirstCut?: boolean;
   firstCutPath?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const ProjectSchema: Schema = new Schema({
-  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  title: { type: String, required: true },
-  type: { type: String, required: true },
-  logline: { type: String, required: true },
-  concept: String,
-  synopsis: String,
-  style: Schema.Types.Mixed,
-  berserker: { type: Boolean, default: false },
-  shots: [Schema.Types.Mixed],
-  characters: [Schema.Types.Mixed],
-  isPublic: { type: Boolean, default: false },
-  isFirstCut: { type: Boolean, default: false, index: true },
-  firstCutPath: { type: String },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-});
+const ProjectSchema: Schema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    title: { type: String, required: true },
+    type: { type: String, required: true },
+    logline: { type: String, required: true },
+    concept: String,
+    synopsis: String,
+    style: Schema.Types.Mixed,
+    berserker: { type: Boolean, default: false },
+    shots: { type: [Schema.Types.Mixed], default: [] },
+    characters: { type: [Schema.Types.Mixed], default: [] },
+    isPublic: { type: Boolean, default: false },
+    isFirstCut: { type: Boolean, default: false, index: true },
+    firstCutPath: { type: String },
+  },
+  {
+    // Mongoose 9: use built-in timestamps — callback-style pre('save', next) crashes
+    // with "TypeError: next is not a function" / "e is not a function"
+    timestamps: true,
+  }
+);
 
 ProjectSchema.index({ userId: 1, updatedAt: -1 });
 
-ProjectSchema.pre('save', function(this: any, next: any) {
-  this.updatedAt = new Date();
-  next();
-});
-
-const Project: Model<IProject> = mongoose.models.Project || mongoose.model<IProject>('Project', ProjectSchema);
+const Project: Model<IProject> =
+  mongoose.models.Project || mongoose.model<IProject>('Project', ProjectSchema);
 
 export default Project;

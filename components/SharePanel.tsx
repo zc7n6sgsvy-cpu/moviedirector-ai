@@ -15,7 +15,7 @@ type SharePanelProps = {
 const PLATFORMS = [
   { id: 'tiktok', label: 'TikTok', hint: 'Copy caption → post in TikTok app' },
   { id: 'reels', label: 'Reels', hint: 'Copy caption → post in Instagram' },
-  { id: 'shorts', label: 'Shorts', hint: 'Copy caption → post on YouTube' }
+  { id: 'shorts', label: 'Shorts', hint: 'Copy caption → post on YouTube' },
   { id: 'x', label: 'X', hint: 'Opens share window' },
   { id: 'linkedin', label: 'LinkedIn', hint: 'Opens share window' },
   { id: 'yt', label: 'YouTube', hint: 'Copy full pack' },

@@ -131,41 +131,52 @@ export async function POST(req: NextRequest) {
     number: idx + 1,
   }));
 
-  const project = await Project.create({
-    userId: auth.userId,
-    title: built.title,
-    type: built.type,
-    logline: built.logline,
-    concept: built.concept,
-    synopsis: built.synopsis,
-    style: built.style,
-    berserker: built.berserker,
-    shots,
-    characters: [],
-    isFirstCut: true,
-    firstCutPath: pathId,
-  });
+  try {
+    const project = await Project.create({
+      userId: auth.userId,
+      title: built.title,
+      type: built.type,
+      logline: built.logline,
+      concept: built.concept,
+      synopsis: built.synopsis,
+      style: built.style,
+      berserker: built.berserker,
+      shots,
+      characters: [],
+      isFirstCut: true,
+      firstCutPath: pathId,
+    });
 
-  user.firstCutStatus = 'in_progress';
-  user.firstCutProjectId = project._id;
-  user.firstCutPath = pathId;
-  user.firstCutFreeImagesRemaining = FIRST_CUT_FREE_IMAGES;
-  user.firstCutFreeVideosRemaining = FIRST_CUT_FREE_VIDEOS;
-  user.onboardingStep = 'first_cut_generate';
-  await user.save();
+    user.firstCutStatus = 'in_progress';
+    user.firstCutProjectId = project._id;
+    user.firstCutPath = pathId;
+    user.firstCutFreeImagesRemaining = FIRST_CUT_FREE_IMAGES;
+    user.firstCutFreeVideosRemaining = FIRST_CUT_FREE_VIDEOS;
+    user.onboardingStep = 'first_cut_generate';
+    await user.save();
 
-  return NextResponse.json({
-    project: serializeDoc(project.toObject()),
-    resumed: false,
-    freeImagesRemaining: FIRST_CUT_FREE_IMAGES,
-    freeVideosRemaining: FIRST_CUT_FREE_VIDEOS,
-    guide: {
-      next: 'Open Clips tab → Generate frame on shot 1 → Generate video. Use your free sample budget.',
-      freeImages: FIRST_CUT_FREE_IMAGES,
-      freeVideos: FIRST_CUT_FREE_VIDEOS,
-      sampleOutcome: path.sampleOutcome,
-    },
-  });
+    return NextResponse.json({
+      project: serializeDoc(project.toObject()),
+      resumed: false,
+      freeImagesRemaining: FIRST_CUT_FREE_IMAGES,
+      freeVideosRemaining: FIRST_CUT_FREE_VIDEOS,
+      guide: {
+        next: 'Open Clips tab → Generate frame on shot 1 → Generate video. Use your free sample budget.',
+        freeImages: FIRST_CUT_FREE_IMAGES,
+        freeVideos: FIRST_CUT_FREE_VIDEOS,
+        sampleOutcome: path.sampleOutcome,
+      },
+    });
+  } catch (err) {
+    console.error('First Cut create project failed', err);
+    return NextResponse.json(
+      {
+        error: err instanceof Error ? err.message : 'Could not create First Cut project',
+        code: 'FIRST_CUT_CREATE_FAILED',
+      },
+      { status: 500 }
+    );
+  }
 }
 
 /** PATCH — mark First Cut complete (sample ready → trial CTA) */
