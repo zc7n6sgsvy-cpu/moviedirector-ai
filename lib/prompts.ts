@@ -20,7 +20,7 @@ import {
   applyCharacterDirectionToPrompt,
 } from '@/lib/concept-lab';
 import { injectCastMemoryIntoPrompt } from '@/lib/character-memory';
-import { isTransitionShot, buildBridgeVideoPrompt } from '@/lib/transitions';
+import { isTransitionShot, buildBridgePrompt } from '@/lib/transitions';
 
 export const DEFAULT_TREATMENTS: Record<
   ProjectType,
@@ -150,12 +150,20 @@ export function buildAutoFramePrompt(project: Project, shot: Shot): string {
  */
 export function generateFramePrompt(project: Project, shot: Shot): string {
   if (!project) return '';
+  // Bridges: never use berserker "summon" path — pure continuity lock
+  if (isTransitionShot(shot) && !shot.framePromptOverride?.trim() && !shot.lockedFramePrompt?.trim()) {
+    const from = (project.shots || []).find((s) => s.id === shot.bridgeFromShotId);
+    const to = (project.shots || []).find((s) => s.id === shot.bridgeToShotId);
+    const body = buildBridgePrompt(project, shot, from, to, 'frame');
+    return applyMasterPromptWrap(injectCastMemoryIntoPrompt(project, shot, body), project, shot.rawPrompt);
+  }
   const override = shot.framePromptOverride?.trim();
   let body = override
     ? override
     : shot.lockedFramePrompt?.trim()
       ? shot.lockedFramePrompt.trim()
       : buildAutoFramePrompt(project, shot);
+  // Soften berserker on frames that are continuity-critical
   body = injectCastMemoryIntoPrompt(project, shot, body);
   return applyMasterPromptWrap(body, project, shot.rawPrompt);
 }
@@ -233,7 +241,7 @@ export function generateVideoPrompt(project: Project, shot: Shot): string {
   if (isTransitionShot(shot) && !shot.videoPromptOverride?.trim() && !shot.lockedVideoPrompt?.trim()) {
     const from = (project.shots || []).find((s) => s.id === shot.bridgeFromShotId);
     const to = (project.shots || []).find((s) => s.id === shot.bridgeToShotId);
-    const bridge = buildBridgeVideoPrompt(project, shot, from, to);
+    const bridge = buildBridgePrompt(project, shot, from, to, 'video');
     return applyMasterPromptWrap(
       injectCastMemoryIntoPrompt(project, shot, bridge),
       project,

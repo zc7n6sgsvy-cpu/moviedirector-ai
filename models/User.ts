@@ -20,6 +20,8 @@ export interface IUser extends Document {
   creditBalance: number;
   lifetimeCreditsUsed: number;
   lifetimeCreditsPurchased: number;
+  /** When included monthly allotment was last reset (use-it-or-lose-it) */
+  creditsResetAt?: Date;
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
   currentPeriodEnd?: Date;
@@ -62,6 +64,7 @@ const UserSchema: Schema = new Schema({
   creditBalance: { type: Number, default: 0, min: 0 },
   lifetimeCreditsUsed: { type: Number, default: 0, min: 0 },
   lifetimeCreditsPurchased: { type: Number, default: 0, min: 0 },
+  creditsResetAt: { type: Date },
   stripeCustomerId: { type: String, index: true, sparse: true },
   stripeSubscriptionId: { type: String, index: true, sparse: true },
   currentPeriodEnd: { type: Date },

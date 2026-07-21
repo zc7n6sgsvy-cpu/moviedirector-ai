@@ -169,7 +169,14 @@ export async function refundCredits(
   return user;
 }
 
-/** Grant credits (signup, plan renewal, pack purchase). */
+/**
+ * Grant credits.
+ * - plan_grant / signup: SET monthly allotment (no rollover) — Claude/Grok style.
+ * - pack_purchase / admin: ADD to balance (paid top-ups).
+ *
+ * Membership fee buys access + a fresh monthly allotment. Unused included
+ * credits expire at period boundary so the app stays a habit, not a bank.
+ */
 export async function grantCredits(
   userId: string,
   amount: number,
@@ -184,16 +191,41 @@ export async function grantCredits(
     if (existing) return User.findById(userId);
   }
 
-  const user = await User.findByIdAndUpdate(
-    userId,
-    {
-      $inc: {
-        creditBalance: amount,
-        lifetimeCreditsPurchased: amount,
+  const noRollover = type === 'plan_grant' || type === 'signup_grant';
+
+  let user: IUser | null;
+  if (noRollover) {
+    // Use-it-or-lose-it: replace period balance with this month's allotment
+    user = await User.findByIdAndUpdate(
+      userId,
+      {
+        $set: {
+          creditBalance: amount,
+          creditsResetAt: new Date(),
+        },
+        $inc: {
+          // lifetime "purchased" only for real money packs — still track allotment grants as 0 inc
+          lifetimeCreditsPurchased: type === 'signup_grant' ? amount : 0,
+        },
       },
-    },
-    { new: true }
-  );
+      { new: true }
+    );
+    // Track allotment grants without inflating "purchased"
+    if (user && type === 'plan_grant') {
+      // no-op on lifetime purchased
+    }
+  } else {
+    user = await User.findByIdAndUpdate(
+      userId,
+      {
+        $inc: {
+          creditBalance: amount,
+          lifetimeCreditsPurchased: amount,
+        },
+      },
+      { new: true }
+    );
+  }
 
   if (!user) return null;
 
@@ -202,12 +234,30 @@ export async function grantCredits(
     type,
     credits: amount,
     balanceAfter: user.creditBalance,
-    description: meta.description,
+    description:
+      meta.description ||
+      (noRollover
+        ? `Monthly allotment set to ${amount} (unused prior credits do not roll over)`
+        : undefined),
     stripeEventId: meta.stripeEventId,
-    metadata: meta.metadata,
+    metadata: { ...meta.metadata, noRollover },
   });
 
   return user;
+}
+
+/** Explicit period reset (membership renew) — same as plan_grant SET. */
+export async function resetMonthlyAllotment(
+  userId: string,
+  monthlyCredits: number,
+  meta: ChargeMeta & { stripeEventId?: string } = {}
+): Promise<IUser | null> {
+  return grantCredits(userId, monthlyCredits, 'plan_grant', {
+    ...meta,
+    description:
+      meta.description ||
+      `Period reset: ${monthlyCredits} credits (membership allotment — does not roll over)`,
+  });
 }
 
 export function estimateImageCharge(
@@ -401,7 +451,7 @@ export async function startPlatformTrial(userId: string): Promise<IUser> {
 export async function getBillingSnapshot(userId: string) {
   await expireTrialIfNeeded(userId);
   const user = await User.findById(userId).select(
-    'plan planStatus creditBalance lifetimeCreditsUsed lifetimeCreditsPurchased stripeCustomerId stripeSubscriptionId currentPeriodEnd username email firstCutStatus firstCutProjectId firstCutPath firstCutFreeImagesRemaining firstCutFreeVideosRemaining firstCutCompletedAt trialEndsAt hasUsedTrial'
+    'plan planStatus creditBalance lifetimeCreditsUsed lifetimeCreditsPurchased creditsResetAt stripeCustomerId stripeSubscriptionId currentPeriodEnd username email firstCutStatus firstCutProjectId firstCutPath firstCutFreeImagesRemaining firstCutFreeVideosRemaining firstCutCompletedAt trialEndsAt hasUsedTrial'
   );
   if (!user) return null;
 
@@ -466,14 +516,28 @@ export async function getBillingSnapshot(userId: string) {
       video5sDraftRetake: videoCreditsFor(5, 'draft', true),
       retakeNote: 'Regenerating a shot that already has a frame/clip costs 50%.',
       freePlanning: true,
+      creditsRollOver: false,
+      allotmentPolicy:
+        'Membership fee = access to the studio. Credits = monthly allotment (use it or lose it — same idea as Claude/Grok). Unused included credits do not roll over so MD stays part of your week, not a vault.',
       newcomerHint:
-        'Stay on DRAFT while exploring. Final is for hero shots. A 15-min sitcom is hybrid: plan free, short shots, stills + VO — not 15 min of continuous regen.',
+        'Stay on DRAFT while exploring. Final is for hero shots. External Grok Imagine gens can attach free; MD credits power in-app Grok, TTS, and platform features.',
       episodeNote:
         'xAI video ≈ $0.05/s. Pure 15 min ≈ $45 API; pure 25 min ≈ $75. Creator $39 targets ~8–12 min finished (+ hybrid cut). Pro $99 ≈ one 15-min episode class. Studio ≈ 2–3.',
       final8s: videoCreditsFor(8, 'final', false),
       draft5s: videoCreditsFor(5, 'draft', false),
       pureFinalMinutesCreator: Math.round((getPlan('creator').monthlyCredits / 2 / 60) * 10) / 10,
+      mdCreditsBuy: [
+        'In-app Grok frames & video (platform key)',
+        'Studio TTS voice lines',
+        'Future: assemble worker, consistency tools',
+      ],
+      freeWithoutMdCredits: [
+        'Full Lab / script / cast / continuity planning',
+        'External Grok Imagine: copy prompt → paste URL into shot',
+        'Shot list, bridges, marketing beats, assemble EDL planning',
+      ],
     },
+    creditsResetAt: user.creditsResetAt || null,
     recentUsage: recent.map((e) => ({
       id: e._id.toString(),
       type: e.type,
@@ -509,10 +573,11 @@ export async function setUserPlan(
   await User.findByIdAndUpdate(userId, { $set: updates });
 
   if (opts.grantMonthlyCredits && plan.monthlyCredits > 0) {
-    await grantCredits(userId, plan.monthlyCredits, 'plan_grant', {
-      description: `${plan.name} monthly credit grant`,
+    // SET allotment — unused credits do not roll over (same pattern as Claude / Grok)
+    await resetMonthlyAllotment(userId, plan.monthlyCredits, {
+      description: `${plan.name} monthly allotment (${plan.monthlyCredits} cr) — fee is membership; credits reset each period`,
       stripeEventId: opts.stripeEventId,
-      metadata: { planId: plan.id },
+      metadata: { planId: plan.id, noRollover: true },
     });
   }
 }

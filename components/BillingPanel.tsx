@@ -301,11 +301,15 @@ export default function BillingPanel({
               </div>
             </div>
           </div>
-          <div className="mt-4 p-3 rounded-xl border border-[var(--gold)]/25 bg-[var(--gold)]/5 text-xs text-white/70 leading-relaxed space-y-1">
-            <div className="text-[10px] tracking-widest uppercase text-[var(--gold)]">Episode reality check</div>
+          <div className="mt-4 p-3 rounded-xl border border-[var(--gold)]/25 bg-[var(--gold)]/5 text-xs text-white/70 leading-relaxed space-y-2">
+            <div className="text-[10px] tracking-widest uppercase text-[var(--gold)]">How membership works</div>
             <p>
+              {(account.costs as { allotmentPolicy?: string }).allotmentPolicy ||
+                'Membership fee = studio access. Credits = monthly allotment (use it or lose it — no rollover).'}
+            </p>
+            <p className="text-white/50">
               {(account.costs as { episodeNote?: string }).episodeNote ||
-                'Grok video costs real money per second. Membership buys a finished-minute budget — not infinite X-style play.'}
+                'Grok video costs real money per second. Allotment is a monthly budget, not a bank vault.'}
             </p>
             {account.costs.newcomerHint && <p className="text-white/50">{account.costs.newcomerHint}</p>}
           </div>

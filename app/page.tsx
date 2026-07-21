@@ -40,7 +40,13 @@ import {
   videoCreditsFor,
   type GenQuality,
 } from '@/lib/gen-economy';
-import { insertTransitionAfter, isTransitionShot } from '@/lib/transitions';
+import {
+  insertTransitionAfter,
+  isTransitionShot,
+  bridgeSeedImageUrl,
+  bridgeReferenceImages,
+  preferredBridgeCharacterIds,
+} from '@/lib/transitions';
 import {
   appendCharacterFact,
   insertCharacterOnAllShots,
@@ -1315,7 +1321,31 @@ export default function MovieDirector() {
       return;
     }
 
-    const prompt = generateVideoPrompt(shot);
+    // Continuity bridge: lock cast + seed from neighbor frames (prevents random characters)
+    const fromShot = isTransitionShot(shot)
+      ? selectedProject.shots.find((s) => s.id === shot.bridgeFromShotId)
+      : undefined;
+    const toShot = isTransitionShot(shot)
+      ? selectedProject.shots.find((s) => s.id === shot.bridgeToShotId)
+      : undefined;
+
+    if (isTransitionShot(shot)) {
+      const lockIds = preferredBridgeCharacterIds(fromShot, toShot);
+      if (lockIds.length && !(shot.characterIds || []).length) {
+        updateShot(shotId, { characterIds: lockIds });
+      }
+    }
+
+    const prompt = generateVideoPrompt(
+      isTransitionShot(shot)
+        ? {
+            ...shot,
+            characterIds: shot.characterIds?.length
+              ? shot.characterIds
+              : preferredBridgeCharacterIds(fromShot, toShot),
+          }
+        : shot
+    );
     navigator.clipboard.writeText(prompt).catch(() => {});
 
     if (!token) {
@@ -1328,48 +1358,75 @@ export default function MovieDirector() {
       .filter(s => s.number < shot.number && s.videoUrl)
       .sort((a, b) => b.number - a.number)[0];
 
-    const referenceImageUrls = [
-      selectedProject.style?.referenceImageUrl,
-      ...(selectedProject.characters || [])
-        .filter(c => shot.characterIds?.includes(c.id))
-        .map(c => c.referenceImageUrl)
-        .filter(Boolean),
-    ].filter(Boolean) as string[];
+    const seedImage = isTransitionShot(shot)
+      ? bridgeSeedImageUrl(shot, fromShot, toShot)
+      : shot.imageUrl;
 
-    const mode = prevShot?.videoUrl && !shot.imageUrl
-      ? 'extend-video'
-      : shot.imageUrl
+    const referenceImageUrls = isTransitionShot(shot)
+      ? bridgeReferenceImages(selectedProject, shot, fromShot, toShot)
+      : ([
+          selectedProject.style?.referenceImageUrl,
+          ...(selectedProject.characters || [])
+            .filter(c => shot.characterIds?.includes(c.id))
+            .map(c => c.referenceImageUrl)
+            .filter(Boolean),
+        ].filter(Boolean) as string[]);
+
+    // Bridges: prefer image-to-video from previous frame — never text-to-video cold start
+    const mode = isTransitionShot(shot)
+      ? seedImage
         ? 'image-to-video'
         : referenceImageUrls.length
           ? 'reference-to-video'
-          : 'text-to-video';
+          : 'text-to-video'
+      : prevShot?.videoUrl && !shot.imageUrl
+        ? 'extend-video'
+        : shot.imageUrl
+          ? 'image-to-video'
+          : referenceImageUrls.length
+            ? 'reference-to-video'
+            : 'text-to-video';
+
+    if (isTransitionShot(shot) && mode === 'text-to-video') {
+      toast.error('Bridge needs a seed frame', {
+        description: 'Generate frames on the shots before/after, or a bridge still first — stops random cast.',
+      });
+      return;
+    }
 
     const cost = videoCreditCost(shot);
     if (
       !confirmSpend(
         'video',
         cost,
-        shot.videoUrl
-          ? 'Retake: half price. Draft clips are shorter (max 5s) to save budget.'
-          : genQuality === 'draft'
-            ? 'Draft clip (max 5s). Final when the motion is locked.'
-            : `Final ${shot.duration || 8}s clip.`
+        isTransitionShot(shot)
+          ? 'Continuity bridge: cast-locked, seeded from previous frame. No new characters.'
+          : shot.videoUrl
+            ? 'Retake: half price. Draft clips are shorter (max 5s) to save budget.'
+            : genQuality === 'draft'
+              ? 'Draft clip (max 5s). Final when the motion is locked.'
+              : `Final ${shot.duration || 8}s clip.`
       )
     ) {
       return;
     }
 
-    toast.loading(`Generating ${genQuality} clip (−${cost} cr)…`, { id: `gen-vid-${shotId}` });
+    toast.loading(
+      isTransitionShot(shot)
+        ? `Generating continuity bridge (−${cost} cr)…`
+        : `Generating ${genQuality} clip (−${cost} cr)…`,
+      { id: `gen-vid-${shotId}` }
+    );
     try {
       const res = await fetch('/api/generate/video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           prompt,
-          imageUrl: shot.imageUrl,
-          videoUrl: prevShot?.videoUrl,
+          imageUrl: seedImage || shot.imageUrl,
+          videoUrl: isTransitionShot(shot) ? undefined : prevShot?.videoUrl,
           referenceImageUrls,
-          duration: shot.duration,
+          duration: isTransitionShot(shot) ? Math.min(shot.duration || 4, 5) : shot.duration,
           mode,
           projectId: selectedProject.id,
           shotId,
@@ -1610,14 +1667,35 @@ export default function MovieDirector() {
       toast.error('Need a following shot to bridge into.');
       return;
     }
+    const a = selectedProject.shots[idx];
+    const b = selectedProject.shots[idx + 1];
+    if (!(a.characterIds || []).length && !(b.characterIds || []).length) {
+      toast.message('Tip: tag cast on both shots before bridging', {
+        description: 'Bridges lock only tagged characters — empty tags risk random faces.',
+      });
+    }
     updateProject((p) => ({
       ...p,
       shots: insertTransitionAfter(p.shots, idx),
     }));
-    toast.success('Transition bridge plate inserted', {
+    toast.success('Continuity bridge inserted', {
       description:
-        'Generate a cheap DRAFT frame to test continuity, animate to a short bridge clip, then drop still-only bridges at AI render.',
+        '1) Tag cast on A & B  2) DRAFT bridge still  3) Animate bridge (seeds from A’s frame, cast-locked)  4) Assemble drops still-only plates.',
     });
+  }
+
+  /** External Grok Imagine path — $0 MD credits: copy prompt, paste asset URL. */
+  function attachExternalAsset(shotId: string, url: string) {
+    const val = url.trim();
+    if (!val) return;
+    const isVid = /\.mp4($|\?)/i.test(val) || /\/video/i.test(val);
+    if (isVid) {
+      updateShot(shotId, { videoUrl: val });
+      toast.success('External clip attached (0 MD credits)');
+    } else {
+      updateShot(shotId, { imageUrl: val });
+      toast.success('External frame attached (0 MD credits)');
+    }
   }
 
   function insertCharacterEverywhere(charId: string) {
@@ -3599,21 +3677,49 @@ Alternative: Set up Render worker for one-click server-side render.
                               type="button"
                               onClick={() => addTransitionAfter(shot.id)}
                               className="text-[10px] text-[var(--gold)]/80 hover:text-[var(--gold)] mt-1.5 text-left"
-                              title="Insert an in-between plate to plan the cut, then animate a short bridge clip before final render"
+                              title="Cast-locked continuity bridge — seeds from this frame into the next shot"
                             >
-                              + Add transition bridge → next shot
+                              + Continuity bridge → next shot
                             </button>
                           )}
+                          {isTransitionShot(shot) && (
+                            <div className="text-[9px] text-amber-200/80 mt-1.5 leading-snug">
+                              Bridge rules: only tagged cast · seeds from previous frame · Berserker chaos off ·
+                              gen DRAFT still then ANIMATE BRIDGE
+                            </div>
+                          )}
 
-                          <button onClick={() => { navigator.clipboard.writeText(getEnhancedFramePrompt(shot)); toast("Full pro prompt copied"); }} className="text-[10px] text-white/50 hover:text-[var(--gold)] mt-1.5 text-left">COPY FULL GROK PROMPT (refs + cues)</button>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(getEnhancedFramePrompt(shot));
+                              toast('Prompt copied — paste into Grok Imagine if using external gen');
+                            }}
+                            className="text-[10px] text-white/50 hover:text-[var(--gold)] mt-1.5 text-left"
+                          >
+                            COPY PROMPT (platform or Grok Imagine)
+                          </button>
 
-                          <div className="mt-1 flex gap-1.5">
-                            <input placeholder="Paste Grok image/video URL" className="text-[10px] flex-1 bg-black/50 px-2 py-0.5 rounded border border-white/10 placeholder:text-white/30 font-mono" onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                const val = (e.target as HTMLInputElement).value.trim();
-                                if (val) { updateShot(shot.id, { imageUrl: val, videoUrl: val.endsWith('.mp4') ? val : shot.videoUrl }); (e.target as HTMLInputElement).value = ''; toast.success('Asset attached'); }
-                              }
-                            }} />
+                          <div className="mt-2 p-2 rounded-xl border border-white/10 bg-black/50 space-y-1">
+                            <div className="text-[9px] uppercase tracking-wider text-white/40">
+                              External Grok Imagine · 0 MD credits
+                            </div>
+                            <input
+                              placeholder="Paste frame or .mp4 URL from grok.com / Imagine"
+                              className="text-[10px] w-full bg-black/50 px-2 py-1 rounded border border-white/10 placeholder:text-white/30 font-mono"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  const val = (e.target as HTMLInputElement).value.trim();
+                                  if (val) {
+                                    attachExternalAsset(shot.id, val);
+                                    (e.target as HTMLInputElement).value = '';
+                                  }
+                                }
+                              }}
+                            />
+                            <div className="text-[9px] text-white/35 leading-snug">
+                              MD credits = in-app Grok + TTS. Free: plan, cast, bridges, paste Imagine assets, then
+                              assemble.
+                            </div>
                           </div>
                         </div>
                       </div>
