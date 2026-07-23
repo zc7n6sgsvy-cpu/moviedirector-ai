@@ -259,6 +259,116 @@ export const XAI_TTS_VOICES = [
   { id: 'sal', label: 'Sal', hint: 'Soft, intimate' },
 ] as const;
 
+/**
+ * Vision / image understanding — used to discover cast & sets from a generated frame.
+ * @see https://docs.x.ai/developers/model-capabilities/images/understanding
+ */
+export async function analyzeImage(
+  imageUrl: string,
+  textPrompt: string,
+  model = process.env.XAI_VISION_MODEL || 'grok-4'
+): Promise<string> {
+  const response = await fetch('https://api.x.ai/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getApiKey()}`,
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_image', image_url: imageUrl, detail: 'high' },
+            { type: 'input_text', text: textPrompt },
+          ],
+        },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    // Fallback: chat completions style some deployments use
+    const chatRes = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getApiKey()}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageUrl } },
+              { type: 'text', text: textPrompt },
+            ],
+          },
+        ],
+        temperature: 0.3,
+      }),
+    });
+    const chatData = await chatRes.json();
+    if (!chatRes.ok) {
+      throw new Error(
+        data?.error?.message ||
+          chatData?.error?.message ||
+          'Image analysis failed'
+      );
+    }
+    return chatData.choices?.[0]?.message?.content || '';
+  }
+
+  // Responses API: output text can be nested
+  if (typeof data.output_text === 'string') return data.output_text;
+  if (Array.isArray(data.output)) {
+    const parts: string[] = [];
+    for (const item of data.output) {
+      if (item?.type === 'message' && Array.isArray(item.content)) {
+        for (const c of item.content) {
+          if (c?.type === 'output_text' && c.text) parts.push(c.text);
+          if (c?.text) parts.push(c.text);
+        }
+      }
+      if (typeof item?.text === 'string') parts.push(item.text);
+    }
+    if (parts.length) return parts.join('\n');
+  }
+  if (data.choices?.[0]?.message?.content) return data.choices[0].message.content;
+  return JSON.stringify(data);
+}
+
+/** Cheap text completion for scene expand from script (no image). */
+export async function completeText(
+  system: string,
+  user: string,
+  model = process.env.XAI_TEXT_MODEL || 'grok-4'
+): Promise<string> {
+  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getApiKey()}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      temperature: 0.7,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error?.message || data?.error || 'Text completion failed');
+  }
+  return data.choices?.[0]?.message?.content || '';
+}
+
 export type GenerateSpeechInput = {
   text: string;
   voice?: string;

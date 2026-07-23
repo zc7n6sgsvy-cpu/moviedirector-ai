@@ -22,6 +22,7 @@ import MarketingStudio from '@/components/MarketingStudio';
 import CharacterConsistencyStudio from '@/components/CharacterConsistencyStudio';
 import EnvironmentStudio from '@/components/EnvironmentStudio';
 import BridgeScannerPanel from '@/components/BridgeScannerPanel';
+import CreativeDiscoveryPanel from '@/components/CreativeDiscoveryPanel';
 import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
 import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
@@ -3680,7 +3681,15 @@ Alternative: Set up Render worker for one-click server-side render.
                   </div>
                 </div>
 
-                <div className="mb-8">
+                <div className="mb-8 space-y-6">
+                  <CreativeDiscoveryPanel
+                    project={selectedProject}
+                    token={token}
+                    onUpdate={updateProject}
+                    onCreditBalance={(n) => setCreditBalance(n)}
+                    onAuthRequired={() => setShowAuthModal(true)}
+                    onGenerateFrame={(id) => generateFrame(id)}
+                  />
                   <BridgeScannerPanel
                     project={selectedProject}
                     token={token}
