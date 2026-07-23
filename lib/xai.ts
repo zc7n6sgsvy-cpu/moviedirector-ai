@@ -139,6 +139,57 @@ export async function generateImage(prompt: string, aspectRatio = '16:9'): Promi
   return { url };
 }
 
+/**
+ * Image edit / multi-image edit — critical for continuity bridges.
+ * Uses neighbor frames so the model cannot invent an unrelated scene.
+ * @see https://docs.x.ai/developers/model-capabilities/images/editing
+ */
+export async function editImage(
+  prompt: string,
+  imageUrls: string[],
+  aspectRatio = '16:9'
+): Promise<{ url: string }> {
+  const urls = imageUrls.filter(Boolean).slice(0, 3);
+  if (!urls.length) {
+    return generateImage(prompt, aspectRatio);
+  }
+
+  const model = process.env.XAI_IMAGE_EDIT_MODEL || process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
+
+  // Single image: { url, type }. Multi: array of same shape (xAI multi-image edit).
+  const imagePayload =
+    urls.length === 1
+      ? { url: urls[0], type: 'image_url' as const }
+      : urls.map((url) => ({ url, type: 'image_url' as const }));
+
+  const response = await fetch('https://api.x.ai/v1/images/edits', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getApiKey()}`,
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      image: imagePayload,
+      n: 1,
+      aspect_ratio: aspectRatio,
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    // Fallback: try generations if edits endpoint rejects shape
+    const msg = data?.error?.message || data?.error || 'Image edit failed';
+    console.error('editImage failed, falling back to text gen:', msg);
+    throw new Error(typeof msg === 'string' ? msg : 'Image edit failed');
+  }
+
+  const url = data.data?.[0]?.url || data.url;
+  if (!url) throw new Error('No image URL returned from xAI edit');
+  return { url };
+}
+
 /** Built-in xAI TTS voice ids (original performers — not celebrity clones). */
 export const XAI_TTS_VOICES = [
   { id: 'ara', label: 'Ara', hint: 'Warm, clear' },

@@ -47,6 +47,8 @@ import {
   isTransitionShot,
   bridgeSeedImageUrl,
   bridgeReferenceImages,
+  bridgeEditImageUrls,
+  bridgeFrameReady,
   preferredBridgeCharacterIds,
 } from '@/lib/transitions';
 import {
@@ -1221,7 +1223,49 @@ export default function MovieDirector() {
     const shot = selectedProject?.shots.find(s => s.id === shotId);
     if (!shot || !selectedProject) return;
 
-    const prompt = generateFramePrompt(shot);
+    // Continuity bridge: must edit FROM neighbor frames — never pure text invention
+    const fromShot = isTransitionShot(shot)
+      ? selectedProject.shots.find((s) => s.id === shot.bridgeFromShotId)
+      : undefined;
+    const toShot = isTransitionShot(shot)
+      ? selectedProject.shots.find((s) => s.id === shot.bridgeToShotId)
+      : undefined;
+
+    if (isTransitionShot(shot)) {
+      const ready = bridgeFrameReady(fromShot, toShot);
+      if (!ready.ok) {
+        toast.error('Bridge needs neighbor frames', { description: ready.reason });
+        return;
+      }
+      const lockIds = preferredBridgeCharacterIds(fromShot, toShot);
+      if (lockIds.length && !(shot.characterIds || []).length) {
+        updateShot(shotId, {
+          characterIds: lockIds,
+          environmentId:
+            shot.environmentId ||
+            fromShot?.environmentId ||
+            toShot?.environmentId ||
+            selectedProject.defaultEnvironmentId,
+        });
+      }
+    }
+
+    const shotForPrompt =
+      isTransitionShot(shot)
+        ? {
+            ...shot,
+            characterIds: shot.characterIds?.length
+              ? shot.characterIds
+              : preferredBridgeCharacterIds(fromShot, toShot),
+            environmentId:
+              shot.environmentId ||
+              fromShot?.environmentId ||
+              toShot?.environmentId ||
+              selectedProject.defaultEnvironmentId,
+          }
+        : shot;
+
+    const prompt = generateFramePrompt(shotForPrompt);
     navigator.clipboard.writeText(prompt).catch(() => {});
 
     if (!token) {
@@ -1243,18 +1287,26 @@ export default function MovieDirector() {
       !confirmSpend(
         'frame',
         cost,
-        shot.imageUrl
-          ? 'Retake: half price because this shot already has a frame.'
-          : genQuality === 'draft'
-            ? 'Draft: cheap look test. Switch to Final when locked.'
-            : 'Final quality still.'
+        isTransitionShot(shot)
+          ? 'Bridge still: image-edit grounded in the previous (and next) frame — not a new scene.'
+          : shot.imageUrl
+            ? 'Retake: half price because this shot already has a frame.'
+            : genQuality === 'draft'
+              ? 'Draft: cheap look test. Switch to Final when locked.'
+              : 'Final quality still.'
       )
     ) {
       return;
     }
 
+    const referenceImageUrls = isTransitionShot(shot)
+      ? bridgeEditImageUrls(selectedProject, shot, fromShot, toShot)
+      : [];
+
     toast.loading(
-      `Generating ${genQuality} frame (−${cost} cr)…`,
+      isTransitionShot(shot)
+        ? `Editing bridge from neighbor frames (−${cost} cr)…`
+        : `Generating ${genQuality} frame (−${cost} cr)…`,
       { id: `gen-img-${shotId}` }
     );
     try {
@@ -1267,6 +1319,8 @@ export default function MovieDirector() {
           shotId,
           quality: genQuality,
           aspectRatio: selectedProject.generationSettings?.aspectRatio || '16:9',
+          mode: isTransitionShot(shot) ? 'bridge' : 'generate',
+          referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
         }),
       });
       const data = await res.json();
@@ -1765,11 +1819,14 @@ export default function MovieDirector() {
     }
     updateProject((p) => ({
       ...p,
-      shots: insertTransitionAfter(p.shots, idx),
+      shots: insertTransitionAfter(p.shots, idx, p.defaultEnvironmentId),
     }));
+    const needA = !a.imageUrl;
+    const needB = !b.imageUrl;
     toast.success('Continuity bridge inserted', {
-      description:
-        '1) Tag cast on A & B  2) DRAFT bridge still  3) Animate bridge (seeds from A’s frame, cast-locked)  4) Assemble drops still-only plates.',
+      description: needA || needB
+        ? `Generate frames on ${needA ? 'the previous' : ''}${needA && needB ? ' and ' : ''}${needB ? 'the next' : ''} shot first — bridge is edited FROM those frames, not invented.`
+        : '1) Tag cast on A & B  2) GENERATE FRAME on bridge (uses A+B as image edit)  3) Animate bridge  4) Assemble.',
     });
   }
 
@@ -3903,9 +3960,15 @@ Alternative: Set up Render worker for one-click server-side render.
                             </button>
                           )}
                           {isTransitionShot(shot) && (
-                            <div className="text-[9px] text-amber-200/80 mt-1.5 leading-snug">
-                              Bridge rules: only tagged cast · seeds from previous frame · Berserker chaos off ·
-                              gen DRAFT still then ANIMATE BRIDGE
+                            <div className="text-[9px] text-amber-200/80 mt-1.5 leading-snug space-y-0.5">
+                              <div>
+                                Bridge = image-edit between neighbor frames (not text-to-image). Generate A &amp; B
+                                frames first or the still will invent a new scene.
+                              </div>
+                              <div>
+                                Cast + set locked from neighbors · GENERATE FRAME uses A (+B) as reference · then
+                                ANIMATE BRIDGE
+                              </div>
                             </div>
                           )}
 

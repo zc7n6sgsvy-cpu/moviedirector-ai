@@ -4,7 +4,7 @@ import User from '@/models/User';
 import { requireAuth } from '@/lib/auth';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
 import { verifyProjectAccess } from '@/lib/project-auth';
-import { generateImage } from '@/lib/xai';
+import { generateImage, editImage } from '@/lib/xai';
 import { persistRemoteAsset } from '@/lib/storage';
 import {
   chargeGeneration,
@@ -47,6 +47,12 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { prompt, aspectRatio, projectId, shotId } = body;
   const quality: GenQuality = body.quality === 'draft' ? 'draft' : 'final';
+  /** Public image URLs for edit / multi-image continuity (bridge frames) */
+  const referenceImageUrls: string[] = Array.isArray(body.referenceImageUrls)
+    ? body.referenceImageUrls.filter((u: unknown) => typeof u === 'string' && /^https?:\/\//i.test(u as string)).slice(0, 3)
+    : [];
+  const forceEdit = body.mode === 'edit' || body.mode === 'bridge' || referenceImageUrls.length > 0;
+
   if (!prompt) return NextResponse.json({ error: 'prompt required' }, { status: 400 });
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });
 
@@ -63,13 +69,27 @@ export async function POST(req: NextRequest) {
     const charge = await chargeGeneration(auth.userId, 'image', credits, {
       projectId,
       shotId,
-      metadata: { quality, isRetake },
-      description: `Image ${quality}${isRetake ? ' retake' : ''} (${credits} credits)`,
+      metadata: { quality, isRetake, mode: forceEdit ? 'edit' : 'generate', refs: referenceImageUrls.length },
+      description: `Image ${quality}${forceEdit ? ' edit/bridge' : ''}${isRetake ? ' retake' : ''} (${credits} credits)`,
     });
     chargedAmount = charge.creditsCharged;
     wasFree = charge.free;
 
-    const result = await generateImage(prompt, aspectRatio);
+    let result: { url: string };
+    let usedEdit = false;
+    if (forceEdit && referenceImageUrls.length) {
+      try {
+        result = await editImage(prompt, referenceImageUrls, aspectRatio || '16:9');
+        usedEdit = true;
+      } catch (editErr) {
+        console.error('Bridge/edit failed, falling back to text generation', editErr);
+        // Last resort — still try text, but prompt should already demand continuity
+        result = await generateImage(prompt, aspectRatio);
+      }
+    } else {
+      result = await generateImage(prompt, aspectRatio);
+    }
+
     const stored = await persistRemoteAsset(
       result.url,
       `frames/${projectId}/${shotId || Date.now()}.jpg`
@@ -85,6 +105,7 @@ export async function POST(req: NextRequest) {
       freeSample: wasFree,
       quality,
       isRetake,
+      usedEdit,
       creditBalance: refreshed?.creditBalance ?? null,
       firstCut: {
         freeImagesRemaining: refreshed?.firstCutFreeImagesRemaining,
