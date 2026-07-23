@@ -273,32 +273,58 @@ export function shotFromBridgeScan(
   };
 }
 
-/** Insert scanner bridge after fromIndex; replaces existing bridge between pair if present. */
+/**
+ * Insert scanner bridge between two story shots (by id).
+ * Places the bridge immediately after `fromShotId` in the list.
+ * Removes any existing bridge linking this same pair.
+ */
 export function insertScannedBridge(
   shots: Shot[],
-  fromIndex: number,
+  fromShotId: string,
+  toShotId: string,
   brief: BridgeScanBrief
 ): Shot[] {
-  if (fromIndex < 0 || fromIndex >= shots.length - 1) return shots;
-  const a = shots[fromIndex];
-  const b = shots[fromIndex + 1];
-  // Remove existing bridge between these two if any
+  if (fromShotId === toShotId) return shots;
+
+  // Drop prior bridge for this pair
   let list = shots.filter(
     (s) =>
       !(
         isTransitionShot(s) &&
-        s.bridgeFromShotId === a.id &&
-        s.bridgeToShotId === b.id
+        s.bridgeFromShotId === fromShotId &&
+        s.bridgeToShotId === toShotId
       )
   );
-  // Re-find index after filter
-  const idx = list.findIndex((s) => s.id === a.id);
-  if (idx < 0) return shots;
-  const bridge = shotFromBridgeScan(brief, { number: idx + 2 });
-  const next = [...list.slice(0, idx + 1), bridge, ...list.slice(idx + 1)];
+
+  const fromIndex = list.findIndex((s) => s.id === fromShotId);
+  const toIndex = list.findIndex((s) => s.id === toShotId);
+  if (fromIndex < 0 || toIndex < 0) return shots;
+  if (isTransitionShot(list[fromIndex]) || isTransitionShot(list[toIndex])) return shots;
+
+  // Insert right after "from" (even if to is not the next card — e.g. user picked #1 and #3)
+  const insertAt = fromIndex + 1;
+  const bridge = shotFromBridgeScan(brief, { number: insertAt + 1 });
+  const next = [...list.slice(0, insertAt), bridge, ...list.slice(insertAt)];
   return next.map((s, i) => ({ ...s, number: i + 1 }));
 }
 
+/** Resolve two explicit story shot ids for scanning. */
+export function findShotPairByIds(
+  shots: Shot[],
+  fromShotId: string,
+  toShotId: string
+): { from: Shot; to: Shot; fromIndex: number; toIndex: number } | null {
+  if (!fromShotId || !toShotId || fromShotId === toShotId) return null;
+  const fromIndex = shots.findIndex((s) => s.id === fromShotId);
+  const toIndex = shots.findIndex((s) => s.id === toShotId);
+  if (fromIndex < 0 || toIndex < 0) return null;
+  const from = shots[fromIndex];
+  const to = shots[toIndex];
+  if (isTransitionShot(from) || isTransitionShot(to)) return null;
+  return { from, to, fromIndex, toIndex };
+}
+
+/** @deprecated prefer findShotPairByIds — next story shot after id */
 export function findShotPair(
   shots: Shot[],
   afterShotId: string
@@ -306,7 +332,6 @@ export function findShotPair(
   const fromIndex = shots.findIndex((s) => s.id === afterShotId);
   if (fromIndex < 0 || fromIndex >= shots.length - 1) return null;
   let toIndex = fromIndex + 1;
-  // Skip existing bridge to find next story shot
   while (toIndex < shots.length && isTransitionShot(shots[toIndex])) toIndex++;
   if (toIndex >= shots.length) return null;
   const from = shots[fromIndex];

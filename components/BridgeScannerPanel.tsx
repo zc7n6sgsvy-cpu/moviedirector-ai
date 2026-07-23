@@ -1,15 +1,15 @@
 'use client';
 
 /**
- * Bridge Scanner UI — scan A + B (media, script, cast, set) → brief → still → motion.
+ * Bridge Scanner — pick two shots (A + B), scan media/script/cast/set, then still → motion.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import type { Project, Shot } from '@/lib/types';
+import type { Project } from '@/lib/types';
 import {
   type BridgeScanBrief,
-  findShotPair,
+  findShotPairByIds,
   insertScannedBridge,
   scanBridgePair,
 } from '@/lib/bridge-scanner';
@@ -24,6 +24,12 @@ type Props = {
   onAuthRequired?: () => void;
 };
 
+function shotLabel(s: { number: number; description?: string; imageUrl?: string; videoUrl?: string }) {
+  const media = s.videoUrl ? 'clip' : s.imageUrl ? 'frame' : 'empty';
+  const d = (s.description || 'Untitled').slice(0, 40);
+  return `#${s.number} [${media}] ${d}${(s.description || '').length > 40 ? '…' : ''}`;
+}
+
 export default function BridgeScannerPanel({
   project,
   token,
@@ -36,38 +42,58 @@ export default function BridgeScannerPanel({
     () => (project.shots || []).filter((s) => !isTransitionShot(s)),
     [project.shots]
   );
-  const [afterId, setAfterId] = useState(storyShots[0]?.id || '');
+
+  const [fromId, setFromId] = useState('');
+  const [toId, setToId] = useState('');
   const [brief, setBrief] = useState<BridgeScanBrief | null>(null);
   const [busy, setBusy] = useState<'scan' | 'still' | 'motion' | null>(null);
   const [bridgeShotId, setBridgeShotId] = useState<string | null>(null);
   const [stillUrl, setStillUrl] = useState<string | null>(null);
 
+  // Default: first two story shots
+  useEffect(() => {
+    if (!storyShots.length) return;
+    if (!fromId || !storyShots.some((s) => s.id === fromId)) {
+      setFromId(storyShots[0].id);
+    }
+    if (!toId || !storyShots.some((s) => s.id === toId)) {
+      const second = storyShots[1]?.id || storyShots[0].id;
+      setToId(second);
+    }
+  }, [storyShots, fromId, toId]);
+
+  const fromShot = storyShots.find((s) => s.id === fromId);
+  const toShot = storyShots.find((s) => s.id === toId);
+
   function runScan() {
-    const pair = findShotPair(project.shots || [], afterId);
+    if (fromId === toId) {
+      toast.error('Pick two different shots — Shot A and Shot B');
+      return;
+    }
+    const pair = findShotPairByIds(project.shots || [], fromId, toId);
     if (!pair) {
-      toast.error('Pick a shot that has a following story shot');
+      toast.error('Could not resolve those shots');
       return;
     }
     setBusy('scan');
     try {
       const b = scanBridgePair(project, pair.from, pair.to);
       setBrief(b);
-      // Insert / replace bridge shot with scan baked in
       onUpdate((p) => {
-        const nextShots = insertScannedBridge(p.shots || [], pair.fromIndex, b);
+        const nextShots = insertScannedBridge(p.shots || [], fromId, toId, b);
         const bridge = nextShots.find(
           (s) =>
             isTransitionShot(s) &&
-            s.bridgeFromShotId === pair.from.id &&
-            s.bridgeToShotId === pair.to.id
+            s.bridgeFromShotId === fromId &&
+            s.bridgeToShotId === toId
         );
         if (bridge) setBridgeShotId(bridge.id);
         return { ...p, shots: nextShots };
       });
       setStillUrl(null);
-      toast.success('Bridge scanned', {
+      toast.success(`Scanned #${pair.from.number} → #${pair.to.number}`, {
         description: b.canGenerateStill
-          ? `Cast: ${b.castNames.join(', ') || 'none'} · Set: ${b.environmentName || 'from frames'} · ${b.referenceImageUrls.length} ref(s)${b.warnings?.length ? ' · ' + b.warnings[0] : ''}`
+          ? `Cast: ${b.castNames.join(', ') || 'none'} · Set: ${b.environmentName || 'from frames'} · ${b.referenceImageUrls.length} ref(s)`
           : b.stillBlocker,
       });
       if (b.warnings?.length) {
@@ -80,7 +106,7 @@ export default function BridgeScannerPanel({
 
   async function genStill() {
     if (!brief) {
-      toast.error('Run Scan first');
+      toast.error('Select two shots and run Scan first');
       return;
     }
     if (!brief.canGenerateStill) {
@@ -173,7 +199,7 @@ export default function BridgeScannerPanel({
   if (storyShots.length < 2) {
     return (
       <div className="p-4 rounded-2xl border border-white/10 text-sm text-white/50">
-        Need at least two story shots to scan a bridge.
+        Need at least two story shots to scan a bridge. Add shots and generate frames on both first.
       </div>
     );
   }
@@ -184,53 +210,100 @@ export default function BridgeScannerPanel({
         <div className="text-[10px] tracking-[3px] uppercase text-[var(--gold)] mb-1">
           Bridge Scanner
         </div>
-        <div className="font-display text-2xl tracking-tight">Scan → brief → still → motion</div>
+        <div className="font-display text-2xl tracking-tight">Pick two shots → scan → still → motion</div>
         <p className="text-xs text-white/50 mt-1 leading-relaxed">
-          Reads both shots (frames and/or clips), script/dialogue, cast locks, and environments — then
-          generates a continuity bridge that cannot invent a third world.
+          Choose <strong className="text-white/70">Shot A</strong> (outgoing) and{' '}
+          <strong className="text-white/70">Shot B</strong> (incoming). The scanner reads both frames/clips,
+          script, cast, and set — then builds a continuity bridge between them.
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-3 items-end">
-        <div className="flex-1 min-w-[180px]">
-          <div className="text-[10px] text-white/40 mb-1 uppercase">Bridge after shot</div>
+      {/* Two explicit shot pickers */}
+      <div className="grid sm:grid-cols-2 gap-3">
+        <div>
+          <div className="text-[10px] text-[var(--gold)] mb-1 uppercase tracking-wider">
+            Shot A · from (outgoing)
+          </div>
           <select
-            className="director-input w-full p-2 text-sm rounded-xl bg-black"
-            value={afterId}
+            className="director-input w-full p-2.5 text-sm rounded-xl bg-black border border-[var(--gold)]/30"
+            value={fromId}
             onChange={(e) => {
-              setAfterId(e.target.value);
+              setFromId(e.target.value);
               setBrief(null);
               setStillUrl(null);
             }}
           >
-            {storyShots.slice(0, -1).map((s) => (
-              <option key={s.id} value={s.id}>
-                #{s.number} — {(s.description || '').slice(0, 48)}
+            {storyShots.map((s) => (
+              <option key={s.id} value={s.id} disabled={s.id === toId}>
+                {shotLabel(s)}
               </option>
             ))}
           </select>
+          {fromShot?.imageUrl && (
+            <img
+              src={fromShot.imageUrl}
+              alt={`Shot ${fromShot.number}`}
+              className="mt-2 h-20 w-full object-cover rounded-lg border border-white/10"
+            />
+          )}
+          {!fromShot?.imageUrl && (
+            <div className="mt-2 text-[10px] text-amber-300/80">No frame yet on A — generate one first</div>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={runScan}
-          disabled={!!busy}
-          className="btn-gold text-black text-sm px-5 py-2.5 rounded-2xl disabled:opacity-40"
-        >
-          {busy === 'scan' ? 'Scanning…' : '1 · Scan both shots'}
-        </button>
+        <div>
+          <div className="text-[10px] text-[var(--cyan)] mb-1 uppercase tracking-wider">
+            Shot B · to (incoming)
+          </div>
+          <select
+            className="director-input w-full p-2.5 text-sm rounded-xl bg-black border border-[var(--cyan)]/30"
+            value={toId}
+            onChange={(e) => {
+              setToId(e.target.value);
+              setBrief(null);
+              setStillUrl(null);
+            }}
+          >
+            {storyShots.map((s) => (
+              <option key={s.id} value={s.id} disabled={s.id === fromId}>
+                {shotLabel(s)}
+              </option>
+            ))}
+          </select>
+          {toShot?.imageUrl && (
+            <img
+              src={toShot.imageUrl}
+              alt={`Shot ${toShot.number}`}
+              className="mt-2 h-20 w-full object-cover rounded-lg border border-white/10"
+            />
+          )}
+          {!toShot?.imageUrl && (
+            <div className="mt-2 text-[10px] text-amber-300/80">No frame yet on B — generate one first</div>
+          )}
+        </div>
       </div>
+
+      <button
+        type="button"
+        onClick={runScan}
+        disabled={!!busy || fromId === toId}
+        className="btn-gold text-black text-sm px-5 py-2.5 rounded-2xl disabled:opacity-40 w-full sm:w-auto"
+      >
+        {busy === 'scan' ? 'Scanning…' : '1 · Scan selected shots'}
+      </button>
 
       {brief && (
         <div className="space-y-3 p-4 rounded-2xl border border-white/10 bg-black/50">
-          <div className="text-[10px] tracking-widest uppercase text-white/40">Continuity brief (free)</div>
+          <div className="text-[10px] tracking-widest uppercase text-white/40">
+            Continuity brief · #{brief.from.number} → #{brief.to.number} (free)
+          </div>
           <div className="grid sm:grid-cols-2 gap-3 text-xs">
-            <div>
-              <div className="text-white/40">FROM #{brief.from.number}</div>
+            <div className="p-2 rounded-xl bg-black/40 border border-[var(--gold)]/20">
+              <div className="text-[var(--gold)]/80 text-[10px] uppercase mb-1">Shot A · #{brief.from.number}</div>
               <div className="text-white/80 line-clamp-3">{brief.from.description}</div>
               <div className="text-white/40 mt-1">Media: {brief.from.media}</div>
             </div>
-            <div>
-              <div className="text-white/40">TO #{brief.to.number}</div>
+            <div className="p-2 rounded-xl bg-black/40 border border-[var(--cyan)]/20">
+              <div className="text-[var(--cyan)]/80 text-[10px] uppercase mb-1">Shot B · #{brief.to.number}</div>
               <div className="text-white/80 line-clamp-3">{brief.to.description}</div>
               <div className="text-white/40 mt-1">Media: {brief.to.media}</div>
             </div>
