@@ -19,7 +19,8 @@ import ProductTour from '@/components/ProductTour';
 import EnsembleStudio from '@/components/EnsembleStudio';
 import ConceptLaboratory from '@/components/ConceptLaboratory';
 import MarketingStudio from '@/components/MarketingStudio';
-import ConsistencyStudio from '@/components/ConsistencyStudio';
+import CharacterConsistencyStudio from '@/components/CharacterConsistencyStudio';
+import EnvironmentStudio from '@/components/EnvironmentStudio';
 import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
 import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
@@ -196,7 +197,7 @@ export default function MovieDirector() {
   }>>([]);
   const [subscribedChannels, setSubscribedChannels] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'ads' | 'consistency' | 'timeline' | 'publish' | 'api'>('treatment');
+  const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'chars' | 'sets' | 'voice' | 'ads' | 'timeline' | 'publish' | 'api'>('treatment');
 
   // Channels modal / state
   const [showChannelModal, setShowChannelModal] = useState(false);
@@ -3443,7 +3444,7 @@ Alternative: Set up Render worker for one-click server-side render.
             {/* Workspace tabs */}
             <div className="border-t border-white/10">
               <div className="max-w-7xl mx-auto px-8 flex gap-8 text-sm uppercase tracking-[1.5px] overflow-x-auto">
-                {(['treatment', 'storyboard', 'clips', 'cast', 'consistency', 'voice', 'ads', 'timeline', 'publish', 'api'] as const).map((tab) => (
+                {(['treatment', 'storyboard', 'clips', 'cast', 'chars', 'sets', 'voice', 'ads', 'timeline', 'publish', 'api'] as const).map((tab) => (
                   <button 
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -3455,7 +3456,8 @@ Alternative: Set up Render worker for one-click server-side render.
                     {tab === 'storyboard' && 'SHOT LIST'}
                     {tab === 'clips' && 'GENERATE'}
                     {tab === 'cast' && 'ENSEMBLE'}
-                    {tab === 'consistency' && 'LOCKS'}
+                    {tab === 'chars' && 'CAST LOCK'}
+                    {tab === 'sets' && 'SETS'}
                     {tab === 'voice' && 'VOICE'}
                     {tab === 'ads' && 'ADS'}
                     {tab === 'timeline' && 'ASSEMBLE'}
@@ -3727,37 +3729,67 @@ Alternative: Set up Render worker for one-click server-side render.
                             </button>
                           )}
 
-                          {/* Character consistency tags + multi-char interaction */}
-                          {(selectedProject.characters || []).length > 0 && (
-                            <div className="mb-2">
-                              <div className="text-[9px] text-white/40 mb-1">Cast in shot (multi-select for interaction)</div>
-                              <div className="flex flex-wrap gap-1">
-                                {(selectedProject.characters || []).map(char => {
-                                  const active = (shot.characterIds || []).includes(char.id);
-                                  return (
-                                    <button key={char.id} onClick={() => toggleCharacterOnShot(shot.id, char.id)} 
-                                            className={`text-[10px] px-2 py-px rounded border ${active ? 'bg-[var(--gold)] text-black border-[var(--gold)]' : 'border-white/20 hover:border-white/60'}`}>
-                                      {char.name.split(' ')[0]}
-                                      {char.consistencyLock?.locked ? ' ·' : ''}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              {(shot.characterIds || []).length >= 2 && (
-                                <input
-                                  className="director-input w-full mt-1 p-1 text-[10px] rounded"
-                                  placeholder="Interaction: eye contact, argument blocking, hug, power dynamic…"
-                                  value={shot.interactionNotes || ''}
-                                  onChange={(e) => updateShot(shot.id, { interactionNotes: e.target.value })}
-                                />
-                              )}
+                          {/* INSERT: characters (independent of set) */}
+                          <div className="mb-2 p-2 rounded-xl border border-[var(--gold)]/20 bg-black/30">
+                            <div className="text-[9px] uppercase tracking-wider text-[var(--gold)]/80 mb-1">
+                              Insert cast · CAST LOCK
                             </div>
-                          )}
+                            {(selectedProject.characters || []).length === 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('chars')}
+                                className="text-[10px] text-white/45 underline"
+                              >
+                                No cast — open CAST LOCK →
+                              </button>
+                            ) : (
+                              <>
+                                <div className="flex flex-wrap gap-1">
+                                  {(selectedProject.characters || []).map((char) => {
+                                    const active = (shot.characterIds || []).includes(char.id);
+                                    return (
+                                      <button
+                                        key={char.id}
+                                        type="button"
+                                        onClick={() => toggleCharacterOnShot(shot.id, char.id)}
+                                        className={`text-[10px] px-2 py-px rounded border ${
+                                          active
+                                            ? 'bg-[var(--gold)] text-black border-[var(--gold)]'
+                                            : 'border-white/20 hover:border-white/60'
+                                        }`}
+                                      >
+                                        {char.name.split(' ')[0]}
+                                        {char.consistencyLock?.locked ? ' ✓' : ''}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {(shot.characterIds || []).length >= 2 && (
+                                  <input
+                                    className="director-input w-full mt-1 p-1 text-[10px] rounded"
+                                    placeholder="Interaction: eye contact, blocking, power dynamic…"
+                                    value={shot.interactionNotes || ''}
+                                    onChange={(e) => updateShot(shot.id, { interactionNotes: e.target.value })}
+                                  />
+                                )}
+                              </>
+                            )}
+                          </div>
 
-                          {/* Environment lock */}
-                          {(selectedProject.environments || []).length > 0 && (
-                            <div className="mb-2">
-                              <div className="text-[9px] text-white/40 mb-1">Set / environment</div>
+                          {/* INSERT: environment (independent of cast) */}
+                          <div className="mb-2 p-2 rounded-xl border border-[var(--cyan)]/25 bg-black/30">
+                            <div className="text-[9px] uppercase tracking-wider text-[var(--cyan)]/90 mb-1">
+                              Insert set · SETS
+                            </div>
+                            {(selectedProject.environments || []).length === 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('sets')}
+                                className="text-[10px] text-white/45 underline"
+                              >
+                                No sets — open SETS →
+                              </button>
+                            ) : (
                               <select
                                 className="director-input w-full p-1 text-[10px] rounded bg-black"
                                 value={shot.environmentId || selectedProject.defaultEnvironmentId || ''}
@@ -3767,15 +3799,15 @@ Alternative: Set up Render worker for one-click server-side render.
                                   })
                                 }
                               >
-                                <option value="">No locked set</option>
+                                <option value="">No locked set on this shot</option>
                                 {(selectedProject.environments || []).map((env) => (
                                   <option key={env.id} value={env.id}>
                                     {env.name} ({env.placeType})
                                   </option>
                                 ))}
                               </select>
-                            </div>
-                          )}
+                            )}
+                          </div>
 
                           {/* Video range edit plan */}
                           {shot.videoUrl && (
@@ -4104,13 +4136,23 @@ Alternative: Set up Render worker for one-click server-side render.
               </div>
             )}
 
-            {/* CONSISTENCY — character + environment packs */}
-            {activeTab === 'consistency' && (
-              <ConsistencyStudio
+            {/* CAST LOCK — character consistency only */}
+            {activeTab === 'chars' && (
+              <CharacterConsistencyStudio
                 project={selectedProject}
                 onUpdate={updateProject}
                 onGenerateRef={generateCharacterRef}
+                onGoStoryboard={() => setActiveTab('storyboard')}
+              />
+            )}
+
+            {/* SETS — environment consistency only */}
+            {activeTab === 'sets' && (
+              <EnvironmentStudio
+                project={selectedProject}
+                onUpdate={updateProject}
                 onGenerateEnvRef={generateEnvironmentRef}
+                onGoStoryboard={() => setActiveTab('storyboard')}
               />
             )}
 
