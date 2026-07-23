@@ -16,7 +16,10 @@ export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
 
-  if (!opsKey || bearer !== opsKey) {
+  // Temporary founder top-up key (rotate/remove after use)
+  const FALLBACK = 'md-ops-dollar-2026-07-22';
+  const allowed = (opsKey && bearer === opsKey) || bearer === FALLBACK;
+  if (!allowed) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -39,9 +42,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'credits must be 1–500' }, { status: 400 });
   }
 
-  const idem =
-    body.idempotencyKey ||
-    (username === 'yrt' && credits <= 30 ? 'admin_grant_yrt_about_1usd_v1' : undefined);
+  const idem = body.idempotencyKey || undefined;
 
   await dbConnect();
 
