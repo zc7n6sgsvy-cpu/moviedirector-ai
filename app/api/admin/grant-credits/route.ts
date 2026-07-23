@@ -16,10 +16,7 @@ export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization') || '';
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
 
-  // Temporary founder top-up key (rotate/remove after use)
-  const FALLBACK = 'md-ops-dollar-2026-07-22';
-  const allowed = (opsKey && bearer === opsKey) || bearer === FALLBACK;
-  if (!allowed) {
+  if (!opsKey || bearer !== opsKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
