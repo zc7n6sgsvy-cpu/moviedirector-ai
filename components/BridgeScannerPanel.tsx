@@ -67,9 +67,12 @@ export default function BridgeScannerPanel({
       setStillUrl(null);
       toast.success('Bridge scanned', {
         description: b.canGenerateStill
-          ? `Cast: ${b.castNames.join(', ') || 'none'} · Set: ${b.environmentName || 'from frames'} · ${b.referenceImageUrls.length} ref frame(s)`
+          ? `Cast: ${b.castNames.join(', ') || 'none'} · Set: ${b.environmentName || 'from frames'} · ${b.referenceImageUrls.length} ref(s)${b.warnings?.length ? ' · ' + b.warnings[0] : ''}`
           : b.stillBlocker,
       });
+      if (b.warnings?.length) {
+        toast.message('Scanner notes', { description: b.warnings.join(' ') });
+      }
     } finally {
       setBusy(null);
     }
@@ -113,11 +116,9 @@ export default function BridgeScannerPanel({
         }));
       }
       if (typeof data.creditBalance === 'number') onCreditBalance?.(data.creditBalance);
-      toast.success(
-        data.usedEdit
-          ? `Bridge still from neighbor frames (−${data.creditsCharged || 0} cr)`
-          : `Bridge still ready (−${data.creditsCharged || 0} cr)`
-      );
+      toast.success(`Bridge still via image-edit (${data.editMode || 'edit'}) −${data.creditsCharged || 0} cr`, {
+        description: `Cast: ${(data.briefSummary?.cast || []).join(', ') || '—'} · Set: ${data.briefSummary?.environment || 'frames'} · ${data.briefSummary?.refs || 0} refs`,
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Bridge still failed');
     } finally {

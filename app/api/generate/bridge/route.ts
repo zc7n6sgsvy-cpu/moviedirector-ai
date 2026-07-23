@@ -5,7 +5,7 @@ import Project from '@/models/Project';
 import { requireAuth } from '@/lib/auth';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
 import { verifyProjectAccess } from '@/lib/project-auth';
-import { editImage, generateImage, generateVideo } from '@/lib/xai';
+import { editImage, generateVideo } from '@/lib/xai';
 import { persistRemoteAsset } from '@/lib/storage';
 import {
   chargeGeneration,
@@ -109,18 +109,8 @@ export async function POST(req: NextRequest) {
     const prompt = promptFromBridgeScan(brief, stage === 'still' ? 'frame' : 'video');
 
     if (stage === 'still') {
-      let result: { url: string };
-      let usedEdit = false;
-      try {
-        result = await editImage(prompt, refs, '16:9');
-        usedEdit = true;
-      } catch {
-        // Fallback still requires refs mentioned in prompt
-        result = await generateImage(
-          `${prompt}\nReference frame URLs for identity (describe matching them exactly): ${refs.join(' | ')}`,
-          '16:9'
-        );
-      }
+      // NEVER fall back to text-to-image — that invents unrelated scenes
+      const result = await editImage(prompt, refs, '16:9');
       const stored = await persistRemoteAsset(
         result.url,
         `bridges/${projectId}/${shotId || Date.now()}-still.jpg`
@@ -129,7 +119,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         stage: 'still',
         imageUrl: stored.url,
-        usedEdit,
+        usedEdit: true,
+        editMode: result.mode,
         creditsCharged: chargedAmount,
         creditBalance: refreshed?.creditBalance ?? null,
         freeSample: charge.free,
@@ -137,6 +128,7 @@ export async function POST(req: NextRequest) {
           cast: brief.castNames,
           environment: brief.environmentName,
           refs: refs.length,
+          refUrls: refs.map((u) => u.slice(0, 60)),
         },
       });
     }

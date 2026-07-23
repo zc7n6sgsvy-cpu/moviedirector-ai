@@ -141,53 +141,113 @@ export async function generateImage(prompt: string, aspectRatio = '16:9'): Promi
 
 /**
  * Image edit / multi-image edit — critical for continuity bridges.
- * Uses neighbor frames so the model cannot invent an unrelated scene.
+ * NEVER falls back to text-to-image (that invents unrelated scenes).
+ * Tries several request shapes because multi-image payload varies by model version.
  * @see https://docs.x.ai/developers/model-capabilities/images/editing
  */
 export async function editImage(
   prompt: string,
   imageUrls: string[],
   aspectRatio = '16:9'
-): Promise<{ url: string }> {
-  const urls = imageUrls.filter(Boolean).slice(0, 3);
+): Promise<{ url: string; mode: string }> {
+  const urls = [...new Set(imageUrls.filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u)))].slice(
+    0,
+    3
+  );
   if (!urls.length) {
-    return generateImage(prompt, aspectRatio);
+    throw new Error('editImage requires at least one public image URL (neighbor frames)');
   }
 
-  const model = process.env.XAI_IMAGE_EDIT_MODEL || process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
+  const model =
+    process.env.XAI_IMAGE_EDIT_MODEL ||
+    process.env.XAI_IMAGE_MODEL ||
+    'grok-imagine-image';
 
-  // Single image: { url, type }. Multi: array of same shape (xAI multi-image edit).
-  const imagePayload =
-    urls.length === 1
-      ? { url: urls[0], type: 'image_url' as const }
-      : urls.map((url) => ({ url, type: 'image_url' as const }));
+  const imgObj = (url: string) => ({ url, type: 'image_url' as const });
 
-  const response = await fetch('https://api.x.ai/v1/images/edits', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getApiKey()}`,
-    },
-    body: JSON.stringify({
+  // Try shapes in order until one works
+  const attempts: { mode: string; body: Record<string, unknown> }[] = [];
+
+  if (urls.length >= 2) {
+    attempts.push({
+      mode: 'multi-image-array',
+      body: {
+        model,
+        prompt,
+        image: urls.map(imgObj),
+        n: 1,
+        aspect_ratio: aspectRatio,
+      },
+    });
+    attempts.push({
+      mode: 'multi-images-key',
+      body: {
+        model,
+        prompt,
+        images: urls.map(imgObj),
+        n: 1,
+        aspect_ratio: aspectRatio,
+      },
+    });
+  }
+
+  // Single-image edit from frame A (most reliable) — prompt must describe bridge to B
+  attempts.push({
+    mode: 'single-from-A',
+    body: {
       model,
       prompt,
-      image: imagePayload,
+      image: imgObj(urls[0]),
       n: 1,
       aspect_ratio: aspectRatio,
-    }),
+    },
   });
 
-  const data = await response.json();
-  if (!response.ok) {
-    // Fallback: try generations if edits endpoint rejects shape
-    const msg = data?.error?.message || data?.error || 'Image edit failed';
-    console.error('editImage failed, falling back to text gen:', msg);
-    throw new Error(typeof msg === 'string' ? msg : 'Image edit failed');
+  // If we have B, also try editing from B only as last multi attempt before fail
+  if (urls.length >= 2) {
+    attempts.push({
+      mode: 'single-from-B',
+      body: {
+        model,
+        prompt: `Ground this edit in the provided frame as SCENE B. ${prompt}`,
+        image: imgObj(urls[1]),
+        n: 1,
+        aspect_ratio: aspectRatio,
+      },
+    });
   }
 
-  const url = data.data?.[0]?.url || data.url;
-  if (!url) throw new Error('No image URL returned from xAI edit');
-  return { url };
+  const errors: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      const response = await fetch('https://api.x.ai/v1/images/edits', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getApiKey()}`,
+        },
+        body: JSON.stringify(attempt.body),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const msg = data?.error?.message || data?.error || response.statusText;
+        errors.push(`${attempt.mode}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+        continue;
+      }
+      const url = data.data?.[0]?.url || data.url;
+      if (!url) {
+        errors.push(`${attempt.mode}: no url in response`);
+        continue;
+      }
+      return { url, mode: attempt.mode };
+    } catch (e) {
+      errors.push(`${attempt.mode}: ${e instanceof Error ? e.message : 'network'}`);
+    }
+  }
+
+  throw new Error(
+    `Image edit failed for all modes (will NOT invent a new scene via text-only). ${errors.join(' · ')}`
+  );
 }
 
 /** Built-in xAI TTS voice ids (original performers — not celebrity clones). */

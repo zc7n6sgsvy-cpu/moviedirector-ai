@@ -77,15 +77,13 @@ export async function POST(req: NextRequest) {
 
     let result: { url: string };
     let usedEdit = false;
+    let editMode: string | undefined;
     if (forceEdit && referenceImageUrls.length) {
-      try {
-        result = await editImage(prompt, referenceImageUrls, aspectRatio || '16:9');
-        usedEdit = true;
-      } catch (editErr) {
-        console.error('Bridge/edit failed, falling back to text generation', editErr);
-        // Last resort — still try text, but prompt should already demand continuity
-        result = await generateImage(prompt, aspectRatio);
-      }
+      // Bridges/edits: hard-fail if edit fails — never invent a new scene via text-only
+      const edited = await editImage(prompt, referenceImageUrls, aspectRatio || '16:9');
+      result = { url: edited.url };
+      usedEdit = true;
+      editMode = edited.mode;
     } else {
       result = await generateImage(prompt, aspectRatio);
     }
@@ -106,6 +104,7 @@ export async function POST(req: NextRequest) {
       quality,
       isRetake,
       usedEdit,
+      editMode,
       creditBalance: refreshed?.creditBalance ?? null,
       firstCut: {
         freeImagesRemaining: refreshed?.firstCutFreeImagesRemaining,

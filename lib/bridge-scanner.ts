@@ -66,6 +66,8 @@ export interface BridgeScanBrief {
   durationSec: number;
   /** Motion intent one-liner */
   motionIntent: string;
+  /** Non-fatal scanner notes (auto-bound cast/set, missing B frame, etc.) */
+  warnings?: string[];
 }
 
 function mediaKind(s: Shot): BridgeMediaKind {
@@ -113,14 +115,29 @@ function envSheet(env?: EnvironmentLocation): string | undefined {
 
 /**
  * Free structural scan — always run before generating a bridge.
- * Does not call xAI; uses project truth + media URLs.
+ * Auto-binds project cast + default/first set when shots untagged.
  */
 export function scanBridgePair(project: Project, from: Shot, to: Shot): BridgeScanBrief {
   const fromS = sliceShot(project, from);
   const toS = sliceShot(project, to);
-  const castIds = preferredBridgeCharacterIds(from, to);
+  const warnings: string[] = [];
+
+  let castIds = preferredBridgeCharacterIds(from, to);
+  if (!castIds.length && (project.characters || []).length > 0) {
+    castIds = (project.characters || []).map((c) => c.id);
+    warnings.push(
+      'Neither shot had cast tags — auto-bound full project cast. Tag cast on shots 1 & 2 for tighter control.'
+    );
+  }
   const cast = (project.characters || []).filter((c) => castIds.includes(c.id));
-  const envId = preferredBridgeEnvironmentId(from, to, project.defaultEnvironmentId);
+
+  let envId = preferredBridgeEnvironmentId(from, to, project.defaultEnvironmentId);
+  if (!envId && (project.environments || []).length > 0) {
+    envId = project.environments![0].id;
+    warnings.push(
+      `No set on shots — auto-bound “${project.environments![0].name}”. Assign SETS on each shot for series reuse.`
+    );
+  }
   const env = (project.environments || []).find((e) => e.id === envId);
 
   const scriptLines: string[] = [];
@@ -128,30 +145,56 @@ export function scanBridgePair(project: Project, from: Shot, to: Shot): BridgeSc
   if (to.dialogue?.trim()) scriptLines.push(`B: ${to.dialogue.trim()}`);
   if (from.voiceoverScript?.trim()) scriptLines.push(`A VO: ${from.voiceoverScript.trim()}`);
   if (to.voiceoverScript?.trim()) scriptLines.push(`B VO: ${to.voiceoverScript.trim()}`);
-  // Pull nearby script context from master script if present
   if (project.script?.trim()) {
     const snippet = project.script.trim().slice(0, 400);
     scriptLines.push(`Master script context: ${snippet}${project.script.length > 400 ? '…' : ''}`);
   }
 
-  const referenceImageUrls = bridgeEditImageUrls(project, { characterIds: castIds } as Shot, from, to);
-  const ready = bridgeFrameReady(from, to);
+  // Neighbor frames first (required for identity), then cast/set refs
+  const frameRefs = [from.imageUrl, to.imageUrl].filter(
+    (u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u)
+  );
+  const extra = bridgeEditImageUrls(
+    project,
+    { characterIds: castIds, environmentId: envId } as Shot,
+    from,
+    to
+  ).filter((u) => !frameRefs.includes(u));
+  const referenceImageUrls = [...frameRefs, ...extra].slice(0, 3);
+
+  let canGenerateStill = frameRefs.length >= 1;
+  let stillBlocker: string | undefined;
+  if (frameRefs.length === 0) {
+    canGenerateStill = false;
+    stillBlocker =
+      'Generate frames on BOTH neighboring shots first. Bridge is an IMAGE EDIT of those frames — never a new scene from text.';
+  } else if (frameRefs.length < 2) {
+    warnings.push(
+      'Only one neighbor has a frame. Generate the other shot’s frame for best cast/set match.'
+    );
+  }
+
+  const styleSafe = (project.style?.description || '')
+    .replace(/berserker|mythic|summon|unchained/gi, '')
+    .trim();
 
   const continuityBrief = [
-    `BRIDGE SCAN — "${project.title}"`,
-    `FROM shot ${from.number} [${fromS.media}]: ${fromS.description.slice(0, 180)}`,
-    `TO shot ${to.number} [${toS.media}]: ${toS.description.slice(0, 180)}`,
+    `BRIDGE SCAN — "${project.title}" (CONTINUITY ONLY — not berserker invent mode)`,
+    `FROM shot ${from.number} [${fromS.media}]: ${fromS.description.slice(0, 220)}`,
+    `TO shot ${to.number} [${toS.media}]: ${toS.description.slice(0, 220)}`,
     cast.length
-      ? `CAST (only): ${cast.map((c) => c.name).join(', ')}. ${cast.map(modelSheet).join(' | ')}`
-      : 'CAST: none tagged — prefer empty environment connect; do not invent people.',
+      ? `CAST LOCK (ONLY these faces — exact likeness from refs + frames): ${cast.map((c) => c.name).join(', ')}. ${cast.map(modelSheet).join(' | ')}`
+      : 'CAST: none — do not invent people.',
     env
-      ? `SET (locked): ${env.name} (${env.placeType}). ${envSheet(env)}. ${env.consistencyLock?.doNotChange || ''}`
-      : 'SET: inherit geography/lighting from reference frames A and B only.',
+      ? `SET LOCK (SAME place): ${env.name} (${env.placeType}). ${envSheet(env)}. ${env.consistencyLock?.doNotChange || 'Do not redesign architecture or furniture.'}`
+      : 'SET: match walls, lighting, geography EXACTLY from reference frames A and B. No new location.',
     scriptLines.length ? `SCRIPT: ${scriptLines.join(' / ')}` : 'SCRIPT: no dialogue on these beats.',
-    project.style?.description ? `STYLE DNA: ${project.style.description}` : '',
+    styleSafe ? `STYLE (match A/B grade): ${styleSafe}` : '',
     project.continuity?.doNotBreak ? `DO NOT BREAK: ${project.continuity.doNotBreak}` : '',
-    `MOTION: exit energy of shot ${from.number} → entry of shot ${to.number}. Micro-action only.`,
-    'FORBIDDEN: new characters, new locations, costume changes, cold-open energy, myth cameos.',
+    project.continuity?.wardrobeRules ? `WARDROBE: ${project.continuity.wardrobeRules}` : '',
+    `MOTION: exit shot ${from.number} → enter shot ${to.number}. Micro-action only.`,
+    'ABSOLUTE FORBIDDEN: new characters, random extras, new buildings, costume redesign, cold open, myth/berserker cameos.',
+    warnings.length ? `NOTES: ${warnings.join(' ')}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -169,10 +212,11 @@ export function scanBridgePair(project: Project, from: Shot, to: Shot): BridgeSc
     scriptLines,
     referenceImageUrls,
     continuityBrief,
-    canGenerateStill: ready.ok,
-    stillBlocker: ready.reason,
+    canGenerateStill,
+    stillBlocker,
     durationSec: 4,
-    motionIntent: `Connect shot ${from.number} into shot ${to.number} in one continuous world.`,
+    motionIntent: `Midpoint continuity from shot ${from.number} into shot ${to.number} — same people, same place as the reference frames.`,
+    warnings,
   };
 }
 
@@ -180,17 +224,21 @@ export function scanBridgePair(project: Project, from: Shot, to: Shot): BridgeSc
 export function promptFromBridgeScan(brief: BridgeScanBrief, kind: 'frame' | 'video'): string {
   if (kind === 'frame') {
     return [
-      'CONTINUITY BRIDGE STILL — image edit of the provided reference frames.',
-      'Image 1 = SCENE A (outgoing). Image 2 (if any) = SCENE B (incoming).',
-      'Output = visual midpoint of A and B. Same world. Same people. Same set.',
+      'You are editing the PROVIDED reference image(s) into a continuity bridge still.',
+      'Image 1 = SCENE A (outgoing frame from the film). Image 2 (if present) = SCENE B (incoming frame).',
+      'Your output MUST look like a natural in-between frame of THIS sequence — same room, same people, same grade.',
+      'Do NOT generate a new unrelated scene. Do NOT invent new faces or locations.',
+      `Cast allowed: ${brief.castNames.join(', ') || 'only people already visible in the reference frames'}.`,
+      brief.environmentName
+        ? `Stay inside locked set: ${brief.environmentName}. ${brief.environmentSheet || ''}`
+        : 'Stay inside the set visible in the reference frames.',
       brief.continuityBrief,
-      'Preserve every face and wardrobe visible in the references. Do not invent strangers.',
-      'Mild pose/camera change only — connective tissue, not a new scene.',
-      'No text overlays. No copyrighted characters.',
+      'Keep identity of every person in the refs. Mild camera/pose change only.',
+      'No text overlays. No copyrighted characters. No berserker myth figures.',
     ].join('\n');
   }
   return [
-    'CONTINUITY BRIDGE CLIP — animate the seed still toward the next beat.',
+    'Animate the seed still as a short continuity bridge — same people, same place.',
     brief.continuityBrief,
     brief.motionIntent,
     'No new faces. No new locations. Smooth continuous motion. Native ambient audio.',
