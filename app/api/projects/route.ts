@@ -23,6 +23,8 @@ const ALLOWED_CREATE_FIELDS = [
   'generationSettings',
   'brandKit',
   'adFormatId',
+  'environments',
+  'defaultEnvironmentId',
   'isFirstCut',
   'firstCutPath',
 ] as const;

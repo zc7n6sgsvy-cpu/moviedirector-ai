@@ -21,6 +21,8 @@ export interface IProject extends Document {
   generationSettings?: Record<string, unknown>;
   brandKit?: Record<string, unknown>;
   adFormatId?: string;
+  environments?: unknown[];
+  defaultEnvironmentId?: string;
   isPublic?: boolean;
   isFirstCut?: boolean;
   firstCutPath?: string;
@@ -46,6 +48,8 @@ const ProjectSchema: Schema = new Schema(
     generationSettings: Schema.Types.Mixed,
     brandKit: Schema.Types.Mixed,
     adFormatId: String,
+    environments: { type: [Schema.Types.Mixed], default: [] },
+    defaultEnvironmentId: String,
     isPublic: { type: Boolean, default: false },
     isFirstCut: { type: Boolean, default: false, index: true },
     firstCutPath: { type: String },

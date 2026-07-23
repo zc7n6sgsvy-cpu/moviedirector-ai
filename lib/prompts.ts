@@ -20,6 +20,7 @@ import {
   applyCharacterDirectionToPrompt,
 } from '@/lib/concept-lab';
 import { injectCastMemoryIntoPrompt } from '@/lib/character-memory';
+import { injectConsistencyIntoPrompt } from '@/lib/consistency-packs';
 import { isTransitionShot, buildBridgePrompt } from '@/lib/transitions';
 
 export const DEFAULT_TREATMENTS: Record<
@@ -154,8 +155,12 @@ export function generateFramePrompt(project: Project, shot: Shot): string {
   if (isTransitionShot(shot) && !shot.framePromptOverride?.trim() && !shot.lockedFramePrompt?.trim()) {
     const from = (project.shots || []).find((s) => s.id === shot.bridgeFromShotId);
     const to = (project.shots || []).find((s) => s.id === shot.bridgeToShotId);
-    const body = buildBridgePrompt(project, shot, from, to, 'frame');
-    return applyMasterPromptWrap(injectCastMemoryIntoPrompt(project, shot, body), project, shot.rawPrompt);
+    const body = injectConsistencyIntoPrompt(
+      project,
+      shot,
+      injectCastMemoryIntoPrompt(project, shot, buildBridgePrompt(project, shot, from, to, 'frame'))
+    );
+    return applyMasterPromptWrap(body, project, shot.rawPrompt);
   }
   const override = shot.framePromptOverride?.trim();
   let body = override
@@ -165,6 +170,7 @@ export function generateFramePrompt(project: Project, shot: Shot): string {
       : buildAutoFramePrompt(project, shot);
   // Soften berserker on frames that are continuity-critical
   body = injectCastMemoryIntoPrompt(project, shot, body);
+  body = injectConsistencyIntoPrompt(project, shot, body);
   return applyMasterPromptWrap(body, project, shot.rawPrompt);
 }
 
@@ -243,7 +249,11 @@ export function generateVideoPrompt(project: Project, shot: Shot): string {
     const to = (project.shots || []).find((s) => s.id === shot.bridgeToShotId);
     const bridge = buildBridgePrompt(project, shot, from, to, 'video');
     return applyMasterPromptWrap(
-      injectCastMemoryIntoPrompt(project, shot, bridge),
+      injectConsistencyIntoPrompt(
+        project,
+        shot,
+        injectCastMemoryIntoPrompt(project, shot, bridge)
+      ),
       project,
       shot.rawPrompt
     );
@@ -255,6 +265,7 @@ export function generateVideoPrompt(project: Project, shot: Shot): string {
       ? shot.lockedVideoPrompt.trim()
       : buildAutoVideoPrompt(project, shot);
   body = injectCastMemoryIntoPrompt(project, shot, body);
+  body = injectConsistencyIntoPrompt(project, shot, body);
   return applyMasterPromptWrap(body, project, shot.rawPrompt);
 }
 

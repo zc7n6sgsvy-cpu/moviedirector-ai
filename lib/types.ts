@@ -51,6 +51,22 @@ export interface Shot {
   rawPrompt?: boolean;
   lastFrameQuality?: GenQuality;
   lastVideoQuality?: GenQuality;
+  /** Locked environment for this shot (series set) */
+  environmentId?: string;
+  /** How multiple tagged characters interact in frame */
+  interactionNotes?: string;
+  /** Staging / blocking for multi-character shots */
+  blocking?: string;
+  /**
+   * Video range edit: optional segment within videoUrl (seconds)
+   * used when regenerating a portion of a clip.
+   */
+  rangeEdit?: {
+    startSec: number;
+    endSec: number;
+    status?: 'planned' | 'replaced';
+    note?: string;
+  };
 }
 
 /**
@@ -115,6 +131,39 @@ export interface Character {
   /** Preferred xAI TTS voice id when generating spoken lines */
   ttsVoiceId?: string;
   tags?: string[];
+  /**
+   * Consistency lock — when set, prompts forbid redesigning this character.
+   * Survives AI gens so series cast doesn't get "wiped."
+   */
+  consistencyLock?: {
+    modelSheet: string;
+    doNotChange: string;
+    referenceUrls: string[];
+    locked: boolean;
+    lockedAt?: string;
+  };
+  /** Link to downloaded/shared character pack id */
+  packId?: string;
+}
+
+/** Locked location for series continuity (home, office, cafe…) */
+export interface EnvironmentLocation {
+  id: string;
+  name: string;
+  placeType: string;
+  description: string;
+  lighting?: string;
+  architecture?: string;
+  signatureProps?: string;
+  referenceImageUrl?: string;
+  consistencyLock?: {
+    modelSheet: string;
+    doNotChange: string;
+    referenceUrls: string[];
+    locked: boolean;
+    lockedAt?: string;
+  };
+  packId?: string;
 }
 
 export interface WorldBible {
@@ -187,6 +236,10 @@ export interface Project {
   };
   /** Active ad format id from Marketing Studio */
   adFormatId?: string;
+  /** Locked environments for this project / series */
+  environments?: EnvironmentLocation[];
+  /** Default environment id for new shots */
+  defaultEnvironmentId?: string;
   isFirstCut?: boolean;
   firstCutPath?: string;
   createdAt: string;

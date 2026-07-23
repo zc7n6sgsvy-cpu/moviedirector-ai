@@ -20,6 +20,8 @@ const ALLOWED_FIELDS = [
   'generationSettings',
   'brandKit',
   'adFormatId',
+  'environments',
+  'defaultEnvironmentId',
   'isPublic',
   'isFirstCut',
   'firstCutPath',

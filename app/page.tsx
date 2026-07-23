@@ -19,6 +19,7 @@ import ProductTour from '@/components/ProductTour';
 import EnsembleStudio from '@/components/EnsembleStudio';
 import ConceptLaboratory from '@/components/ConceptLaboratory';
 import MarketingStudio from '@/components/MarketingStudio';
+import ConsistencyStudio from '@/components/ConsistencyStudio';
 import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
 import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
@@ -195,7 +196,7 @@ export default function MovieDirector() {
   }>>([]);
   const [subscribedChannels, setSubscribedChannels] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'ads' | 'timeline' | 'publish' | 'api'>('treatment');
+  const [activeTab, setActiveTab] = useState<'treatment' | 'storyboard' | 'clips' | 'cast' | 'voice' | 'ads' | 'consistency' | 'timeline' | 'publish' | 'api'>('treatment');
 
   // Channels modal / state
   const [showChannelModal, setShowChannelModal] = useState(false);
@@ -701,6 +702,8 @@ export default function MovieDirector() {
           generationSettings: project.generationSettings,
           brandKit: project.brandKit,
           adFormatId: project.adFormatId,
+          environments: project.environments,
+          defaultEnvironmentId: project.defaultEnvironmentId,
         }),
       });
       if (!res.ok) {
@@ -1631,11 +1634,20 @@ export default function MovieDirector() {
         }
         throw new Error(data.error || 'Reference generation failed');
       }
-      updateCharacter(charId, { referenceImageUrl: data.imageUrl });
+      updateCharacter(charId, {
+        referenceImageUrl: data.imageUrl,
+        consistencyLock: {
+          modelSheet: `${char.name} — ${char.description}`,
+          doNotChange: char.faceNotes || char.wardrobe || 'Exact face, hair, wardrobe from this reference',
+          referenceUrls: [data.imageUrl as string],
+          locked: true,
+          lockedAt: new Date().toISOString(),
+        },
+      });
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
       toast.success(
         data.freeSample ? `Free ref ready for ${char.name}` : `Reference ready for ${char.name}`,
-        { id: `char-ref-${charId}`, description: 'Prompt also copied to clipboard.' }
+        { id: `char-ref-${charId}`, description: 'Character auto-locked to this reference.' }
       );
     } catch (err) {
       // Fallback placeholder so offline/demo still works
@@ -1648,6 +1660,82 @@ export default function MovieDirector() {
         description: 'Prompt copied. Placeholder image set for layout.',
       });
     }
+  }
+
+  async function generateEnvironmentRef(envId: string) {
+    const project = selectedProject;
+    if (!project || !token) {
+      toast.error('Sign in to generate set references');
+      return;
+    }
+    if (!isValidObjectId(project.id)) {
+      toast.error('Cloud project required');
+      return;
+    }
+    const env = (project.environments || []).find((e) => e.id === envId);
+    if (!env) return;
+    const prompt = [
+      `Environment reference plate for original series "${project.title}".`,
+      `Location: ${env.name} (${env.placeType}).`,
+      env.description,
+      env.lighting && `Lighting: ${env.lighting}.`,
+      env.architecture && `Architecture: ${env.architecture}.`,
+      env.signatureProps && `Signature props: ${env.signatureProps}.`,
+      env.consistencyLock?.doNotChange,
+      project.style?.description && `Style: ${project.style.description}.`,
+      'Empty of main cast — set plate only. Consistent for series reuse. No copyrighted locations.',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    toast.loading(`Generating set ref: ${env.name}…`, { id: `env-ref-${envId}` });
+    try {
+      const res = await fetch('/api/generate/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ prompt, projectId: project.id, shotId: `env-${envId}` }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Set ref failed');
+      updateProject((p) => ({
+        ...p,
+        environments: (p.environments || []).map((e) =>
+          e.id === envId
+            ? {
+                ...e,
+                referenceImageUrl: data.imageUrl as string,
+                consistencyLock: {
+                  modelSheet: `${e.name} — ${e.description}`,
+                  doNotChange:
+                    e.consistencyLock?.doNotChange ||
+                    'Never redesign architecture, wall color, furniture layout, or signature props.',
+                  referenceUrls: [data.imageUrl as string],
+                  locked: true,
+                  lockedAt: new Date().toISOString(),
+                },
+              }
+            : e
+        ),
+      }));
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      toast.success(`Set locked: ${env.name}`, { id: `env-ref-${envId}` });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Set ref failed', { id: `env-ref-${envId}` });
+    }
+  }
+
+  /** Plan a range edit on a clip (segment to regenerate / replace later). */
+  function planRangeEdit(shotId: string, startSec: number, endSec: number, note?: string) {
+    if (endSec <= startSec) {
+      toast.error('End must be after start');
+      return;
+    }
+    updateShot(shotId, {
+      rangeEdit: { startSec, endSec, status: 'planned', note },
+    });
+    toast.success(`Range marked ${startSec}s–${endSec}s`, {
+      description: 'Regen that beat with DRAFT/FINAL, then mark replaced when the new clip is attached.',
+    });
   }
 
   function toggleCharacterOnShot(shotId: string, charId: string) {
@@ -3355,7 +3443,7 @@ Alternative: Set up Render worker for one-click server-side render.
             {/* Workspace tabs */}
             <div className="border-t border-white/10">
               <div className="max-w-7xl mx-auto px-8 flex gap-8 text-sm uppercase tracking-[1.5px] overflow-x-auto">
-                {(['treatment', 'storyboard', 'clips', 'cast', 'voice', 'ads', 'timeline', 'publish', 'api'] as const).map((tab) => (
+                {(['treatment', 'storyboard', 'clips', 'cast', 'consistency', 'voice', 'ads', 'timeline', 'publish', 'api'] as const).map((tab) => (
                   <button 
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -3367,6 +3455,7 @@ Alternative: Set up Render worker for one-click server-side render.
                     {tab === 'storyboard' && 'SHOT LIST'}
                     {tab === 'clips' && 'GENERATE'}
                     {tab === 'cast' && 'ENSEMBLE'}
+                    {tab === 'consistency' && 'LOCKS'}
                     {tab === 'voice' && 'VOICE'}
                     {tab === 'ads' && 'ADS'}
                     {tab === 'timeline' && 'ASSEMBLE'}
@@ -3638,18 +3727,117 @@ Alternative: Set up Render worker for one-click server-side render.
                             </button>
                           )}
 
-                          {/* Character consistency tags */}
+                          {/* Character consistency tags + multi-char interaction */}
                           {(selectedProject.characters || []).length > 0 && (
-                            <div className="mb-2 flex flex-wrap gap-1">
-                              {(selectedProject.characters || []).map(char => {
-                                const active = (shot.characterIds || []).includes(char.id);
-                                return (
-                                  <button key={char.id} onClick={() => toggleCharacterOnShot(shot.id, char.id)} 
-                                          className={`text-[10px] px-2 py-px rounded border ${active ? 'bg-[var(--gold)] text-black border-[var(--gold)]' : 'border-white/20 hover:border-white/60'}`}>
-                                    {char.name.split(' ')[0]}
+                            <div className="mb-2">
+                              <div className="text-[9px] text-white/40 mb-1">Cast in shot (multi-select for interaction)</div>
+                              <div className="flex flex-wrap gap-1">
+                                {(selectedProject.characters || []).map(char => {
+                                  const active = (shot.characterIds || []).includes(char.id);
+                                  return (
+                                    <button key={char.id} onClick={() => toggleCharacterOnShot(shot.id, char.id)} 
+                                            className={`text-[10px] px-2 py-px rounded border ${active ? 'bg-[var(--gold)] text-black border-[var(--gold)]' : 'border-white/20 hover:border-white/60'}`}>
+                                      {char.name.split(' ')[0]}
+                                      {char.consistencyLock?.locked ? ' ·' : ''}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {(shot.characterIds || []).length >= 2 && (
+                                <input
+                                  className="director-input w-full mt-1 p-1 text-[10px] rounded"
+                                  placeholder="Interaction: eye contact, argument blocking, hug, power dynamic…"
+                                  value={shot.interactionNotes || ''}
+                                  onChange={(e) => updateShot(shot.id, { interactionNotes: e.target.value })}
+                                />
+                              )}
+                            </div>
+                          )}
+
+                          {/* Environment lock */}
+                          {(selectedProject.environments || []).length > 0 && (
+                            <div className="mb-2">
+                              <div className="text-[9px] text-white/40 mb-1">Set / environment</div>
+                              <select
+                                className="director-input w-full p-1 text-[10px] rounded bg-black"
+                                value={shot.environmentId || selectedProject.defaultEnvironmentId || ''}
+                                onChange={(e) =>
+                                  updateShot(shot.id, {
+                                    environmentId: e.target.value || undefined,
+                                  })
+                                }
+                              >
+                                <option value="">No locked set</option>
+                                {(selectedProject.environments || []).map((env) => (
+                                  <option key={env.id} value={env.id}>
+                                    {env.name} ({env.placeType})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {/* Video range edit plan */}
+                          {shot.videoUrl && (
+                            <div className="mb-2 p-2 rounded-xl border border-white/10 bg-black/40">
+                              <div className="text-[9px] uppercase tracking-wider text-white/40 mb-1">
+                                Range edit (select segment to fix)
+                              </div>
+                              <div className="flex gap-1 items-center text-[10px]">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.5}
+                                  placeholder="start s"
+                                  className="director-input w-14 p-1 rounded text-[10px]"
+                                  id={`range-start-${shot.id}`}
+                                />
+                                <span className="text-white/40">–</span>
+                                <input
+                                  type="number"
+                                  min={0.5}
+                                  step={0.5}
+                                  placeholder="end s"
+                                  className="director-input w-14 p-1 rounded text-[10px]"
+                                  id={`range-end-${shot.id}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-outline text-[9px] px-2 py-1 rounded"
+                                  onClick={() => {
+                                    const s = Number(
+                                      (document.getElementById(`range-start-${shot.id}`) as HTMLInputElement)
+                                        ?.value || 0
+                                    );
+                                    const e = Number(
+                                      (document.getElementById(`range-end-${shot.id}`) as HTMLInputElement)
+                                        ?.value || 0
+                                    );
+                                    planRangeEdit(shot.id, s, e);
+                                  }}
+                                >
+                                  Mark
+                                </button>
+                              </div>
+                              {shot.rangeEdit && (
+                                <div className="text-[9px] text-[var(--cyan)] mt-1">
+                                  Marked {shot.rangeEdit.startSec}s–{shot.rangeEdit.endSec}s · {shot.rangeEdit.status}
+                                  <button
+                                    type="button"
+                                    className="ml-2 underline text-white/50"
+                                    onClick={() =>
+                                      updateShot(shot.id, {
+                                        rangeEdit: { ...shot.rangeEdit!, status: 'replaced' },
+                                      })
+                                    }
+                                  >
+                                    Mark replaced
                                   </button>
-                                );
-                              })}
+                                </div>
+                              )}
+                              <div className="text-[9px] text-white/35 mt-0.5">
+                                Plan the bad beat → regen DRAFT of that moment → attach new clip / replace.
+                              </div>
                             </div>
                           )}
 
@@ -3914,6 +4102,16 @@ Alternative: Set up Render worker for one-click server-side render.
                   </div>
                 )}
               </div>
+            )}
+
+            {/* CONSISTENCY — character + environment packs */}
+            {activeTab === 'consistency' && (
+              <ConsistencyStudio
+                project={selectedProject}
+                onUpdate={updateProject}
+                onGenerateRef={generateCharacterRef}
+                onGenerateEnvRef={generateEnvironmentRef}
+              />
             )}
 
             {/* MARKETING STUDIO — short-form / ads / brand */}
