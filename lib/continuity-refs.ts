@@ -1,13 +1,8 @@
 /**
  * Continuity references — surgical image-edit, not "concept art with hints".
  *
- * Product rule: once a set/cast is locked, later frames must EDIT a real plate
- * (prior shot or set plate). Long invent-style prompts + multi-ref remix still
- * spawn extra people and random props — so we:
- *   1) Prefer a single base plate (prior same-set frame)
- *   2) Use a short delta-only edit prompt
- *   3) Hard-lock cast count (exactly N named people; remove everyone else)
- *   4) Auto-inherit cast + set from previous same-set shot
+ * Identity rule (Dane bug): when the director tags character X, the output
+ * person MUST be X — never another project cast member from a shared plate.
  */
 
 import type { Project, Shot, EnvironmentLocation, Character } from '@/lib/types';
@@ -21,18 +16,47 @@ function isPublicUrl(u: unknown): u is string {
   return typeof u === 'string' && HTTPS.test(u) && !u.includes('picsum.photos');
 }
 
+function urlKey(u: string) {
+  return u.split('?')[0];
+}
+
 function uniqueUrls(urls: string[], max = MAX_CONTINUITY_REFS): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const u of urls) {
     if (!isPublicUrl(u)) continue;
-    const key = u.split('?')[0];
+    const key = urlKey(u);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(u);
     if (out.length >= max) break;
   }
   return out;
+}
+
+function sameIds(a: string[] = [], b: string[] = []) {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort().join('|');
+  const sb = [...b].sort().join('|');
+  return sa === sb;
+}
+
+/** True if this character's plate URL is shared with another cast member or the set plate */
+export function characterHasSharedPlate(
+  project: Project,
+  character: Character,
+  env?: EnvironmentLocation | null
+): boolean {
+  const mine = characterRefUrls(character)[0];
+  if (!mine) return false;
+  const key = urlKey(mine);
+  if (env?.referenceImageUrl && urlKey(env.referenceImageUrl) === key) return true;
+  for (const other of project.characters || []) {
+    if (other.id === character.id) continue;
+    const ou = characterRefUrls(other)[0];
+    if (ou && urlKey(ou) === key) return true;
+  }
+  return false;
 }
 
 export function resolveShotEnvironment(
@@ -76,11 +100,46 @@ export function previousSameSetShot(project: Project, shot: Shot): Shot | undefi
     if (same) return same;
   }
 
-  // Prefer immediate previous by number
   const prev = [...shots]
     .filter((s) => (s.number || 0) < (shot.number || 0))
     .sort((a, b) => (b.number || 0) - (a.number || 0))[0];
   return prev;
+}
+
+/**
+ * Prefer a prior frame that already featured the SAME cast ids.
+ * Avoid basing a "Dane only" shot on a still that starred someone else.
+ */
+export function priorFrameMatchingCast(
+  project: Project,
+  shot: Shot
+): Shot | undefined {
+  const want = shot.characterIds || [];
+  const envId = shot.environmentId || project.defaultEnvironmentId;
+  const shots = framedStoryShots(project, shot.id)
+    .filter((s) => (s.number || 0) < (shot.number || 0) || !shot.number)
+    .reverse();
+
+  // Exact cast match on same set
+  const exact = shots.find(
+    (s) =>
+      sameIds(s.characterIds || [], want) &&
+      (!envId || (s.environmentId || project.defaultEnvironmentId) === envId)
+  );
+  if (exact) return exact;
+
+  // Sole character match (shot calls one person; prior also only that person)
+  if (want.length === 1) {
+    const sole = shots.find(
+      (s) =>
+        (s.characterIds || []).length === 1 &&
+        s.characterIds![0] === want[0] &&
+        (!envId || (s.environmentId || project.defaultEnvironmentId) === envId)
+    );
+    if (sole) return sole;
+  }
+
+  return undefined;
 }
 
 export function previousSameSetFrameUrl(project: Project, shot: Shot): string | undefined {
@@ -93,18 +152,21 @@ export type ContinuityRefBundle = {
   labels: string[];
   environment?: EnvironmentLocation;
   cast: Character[];
+  /** Other project cast that must NOT appear */
+  forbiddenCast: Character[];
   hasEnvPlate: boolean;
   hasCastPlate: boolean;
   hasPriorFrame: boolean;
   useEdit: boolean;
-  /** Base plate is the single most important image (edit this) */
   baseUrl?: string;
-  strategy: 'prior-frame' | 'set-plate' | 'cast-plate' | 'none';
+  strategy: 'prior-frame' | 'set-plate' | 'cast-plate' | 'identity' | 'none';
+  /** Selected cast shares multi-person discover plates */
+  sharedPlateRisk: boolean;
 };
 
 /**
- * Collect continuity refs with PRIOR FRAME as the primary base.
- * Multi-ref only adds DISTINCT character sheets when needed (max 3 total).
+ * Collect continuity refs with IDENTITY-SAFE base selection.
+ * Calling Dane must not start from a still that is mostly another character.
  */
 export function collectContinuityRefs(project: Project, shot: Shot): ContinuityRefBundle {
   const env = resolveShotEnvironment(project, shot);
@@ -112,56 +174,95 @@ export function collectContinuityRefs(project: Project, shot: Shot): ContinuityR
   const cast = (project.characters || []).filter((c) =>
     (shot.characterIds || []).includes(c.id)
   );
-  const prior = previousSameSetFrameUrl(project, shot);
+  const forbiddenCast = (project.characters || []).filter(
+    (c) => !(shot.characterIds || []).includes(c.id)
+  );
+  const wantsCast = cast.length > 0;
+  const sharedPlateRisk = cast.some((c) => characterHasSharedPlate(project, c, env));
+
+  const matchCastPrior = priorFrameMatchingCast(project, shot);
+  const anyPrior = previousSameSetShot(project, shot);
 
   type Labeled = { url: string; label: string; role: 'base' | 'cast' | 'set' };
   const queue: Labeled[] = [];
+  let strategy: ContinuityRefBundle['strategy'] = 'none';
 
-  const wantsCast = cast.length > 0;
-
-  // 0) Retake: edit THIS shot's existing frame
+  // 0) Retake current shot
   if (isPublicUrl(shot.imageUrl)) {
     queue.push({
       url: shot.imageUrl!,
       label: wantsCast
-        ? 'THIS shot plate — retake/edit; keep room + selected cast locked'
-        : 'THIS shot plate — retake; SET ONLY — remove people if present',
+        ? `Retake plate — hero identity MUST be ${cast.map((c) => c.name).join(' + ')} only`
+        : 'Retake plate — SET ONLY, remove people',
       role: 'base',
     });
+    strategy = 'prior-frame';
   } else if (!wantsCast && envUrls[0]) {
-    // Set-only: prefer clean set plate over a prior shot full of people
     queue.push({
       url: envUrls[0],
-      label: `LOCKED SET plate "${env?.name || 'set'}" — empty room geometry; no characters`,
+      label: `SET plate "${env?.name || 'set'}" — empty room; no characters`,
       role: 'base',
     });
-  } else if (prior) {
+    strategy = 'set-plate';
+  } else if (wantsCast && matchCastPrior?.imageUrl) {
+    // Best: prior still already used this exact cast
     queue.push({
-      url: prior,
-      label: wantsCast
-        ? 'LOCKED production still (prior shot) — edit THIS image'
-        : 'Prior still for SET continuity — REMOVE all people; keep only the room',
+      url: matchCastPrior.imageUrl,
+      label: `Prior still with SAME cast (${cast.map((c) => c.name).join(', ')}) — edit this; do not swap identity`,
       role: 'base',
     });
+    strategy = 'identity';
+  } else if (wantsCast && cast.length === 1 && sharedPlateRisk && envUrls[0]) {
+    // Dane bug path: shared multi-person plate + single call → start from SET, not wrong hero still
+    queue.push({
+      url: envUrls[0],
+      label: `SET plate for identity-safe insert of "${cast[0].name}" only — do not use other cast faces`,
+      role: 'base',
+    });
+    strategy = 'identity';
+  } else if (wantsCast && cast.length === 1 && characterRefUrls(cast[0])[0] && !sharedPlateRisk) {
+    // Dedicated solo plate for this character
+    queue.push({
+      url: characterRefUrls(cast[0])[0],
+      label: `Dedicated likeness plate for "${cast[0].name}" only`,
+      role: 'base',
+    });
+    strategy = 'cast-plate';
+  } else if (anyPrior?.imageUrl) {
+    const priorCast = (anyPrior.characterIds || [])
+      .map((id) => project.characters?.find((c) => c.id === id)?.name)
+      .filter(Boolean);
+    queue.push({
+      url: anyPrior.imageUrl,
+      label: wantsCast
+        ? `Prior still (may show ${priorCast.join(', ') || 'others'}) — REPLACE visible people with ${cast
+            .map((c) => c.name)
+            .join(' + ')} only; delete every other identity`
+        : 'Prior still — REMOVE all people; keep room',
+      role: 'base',
+    });
+    strategy = 'prior-frame';
   } else if (envUrls[0]) {
     queue.push({
       url: envUrls[0],
-      label: `LOCKED SET plate "${env?.name || 'set'}" — keep this room geometry`,
+      label: `SET plate "${env?.name || 'set'}"`,
       role: 'base',
     });
+    strategy = 'set-plate';
   }
 
-  // Character sheets only when director actually selected cast on this shot
+  // Add cast likeness only if it's a DISTINCT url from base (true solo ref)
   if (wantsCast) {
+    const baseKey = queue[0] ? urlKey(queue[0].url) : '';
     for (const c of cast) {
       const u = characterRefUrls(c)[0];
       if (!u) continue;
-      if (prior && u.split('?')[0] === prior.split('?')[0]) continue;
-      if (envUrls[0] && u.split('?')[0] === envUrls[0].split('?')[0]) continue;
-      if (shot.imageUrl && u.split('?')[0] === shot.imageUrl.split('?')[0]) continue;
+      if (urlKey(u) === baseKey) continue;
+      // Skip shared multi-person plates as "likeness" — they cause identity swaps
+      if (characterHasSharedPlate(project, c, env)) continue;
       queue.push({
         url: u,
-        label: `LOCKED CHARACTER likeness "${c.name}" — match this face/wardrobe only`,
+        label: `Likeness ONLY for "${c.name}" — match this face/wardrobe; ignore any other people if present`,
         role: 'cast',
       });
     }
@@ -172,7 +273,7 @@ export function collectContinuityRefs(project: Project, shot: Shot): ContinuityR
   const seen = new Set<string>();
   for (const item of queue) {
     if (!isPublicUrl(item.url)) continue;
-    const key = item.url.split('?')[0];
+    const key = urlKey(item.url);
     if (seen.has(key)) continue;
     seen.add(key);
     urls.push(item.url);
@@ -180,33 +281,27 @@ export function collectContinuityRefs(project: Project, shot: Shot): ContinuityR
     if (urls.length >= MAX_CONTINUITY_REFS) break;
   }
 
-  const strategy: ContinuityRefBundle['strategy'] = isPublicUrl(shot.imageUrl)
-    ? 'prior-frame' // retake of current still
-    : prior
-      ? 'prior-frame'
-      : envUrls[0]
-        ? 'set-plate'
-        : urls.length
-          ? 'cast-plate'
-          : 'none';
+  if (!urls.length) strategy = 'none';
 
   return {
     urls,
     labels,
     environment: env,
     cast,
+    forbiddenCast,
     hasEnvPlate: envUrls.length > 0,
     hasCastPlate: cast.some((c) => characterRefUrls(c).length > 0),
-    hasPriorFrame: !!prior,
+    hasPriorFrame: !!anyPrior?.imageUrl,
     useEdit: urls.length > 0,
     baseUrl: urls[0],
     strategy,
+    sharedPlateRisk,
   };
 }
 
 /**
- * Short, surgical edit prompt. Long "masterpiece sitcom frame" prompts
- * cause the model to invent extras and props even when image-editing.
+ * Surgical edit prompt with HARD identity law:
+ * selected cast only; every other project character is forbidden by name.
  */
 export function buildStrictContinuityEditPrompt(
   project: Project,
@@ -219,78 +314,86 @@ export function buildStrictContinuityEditPrompt(
       : (project.characters || []).filter((c) => (shot.characterIds || []).includes(c.id));
   const n = cast.length;
   const names = cast.map((c) => c.name);
+  const forbidden =
+    bundle.forbiddenCast?.length > 0
+      ? bundle.forbiddenCast
+      : (project.characters || []).filter((c) => !(shot.characterIds || []).includes(c.id));
+  const forbiddenNames = forbidden.map((c) => c.name).filter(Boolean);
+
+  const identityLaw =
+    n === 0
+      ? 'IDENTITY LAW: No cast selected. ZERO people. Remove every person.'
+      : n === 1
+        ? `IDENTITY LAW (CRITICAL): The ONLY person allowed on screen is "${names[0]}". ` +
+          `If Image 1 shows a different person, REPLACE them with "${names[0]}" using the likeness lock below — ` +
+          `or remove them and place "${names[0]}" alone. ` +
+          `Never leave the wrong character as the hero. Calling "${names[0]}" must show "${names[0]}", not a substitute.`
+        : `IDENTITY LAW: The ONLY people allowed are ${names.join(' and ')}. ` +
+          `Do not substitute, merge, or promote any other identity.`;
+
+  const banList =
+    forbiddenNames.length > 0
+      ? `FORBIDDEN CHARACTERS (must not appear at all — not as hero, not as background): ${forbiddenNames.join(
+          ', '
+        )}. ` +
+        `If any of these faces are in the source plate, delete them completely.`
+      : 'Do not invent new named characters.';
 
   const castBlock =
     n === 0
-      ? 'PEOPLE: EMPTY CAST LOCK — director wants NO characters in this shot. ' +
-        'Remove every person from the frame completely (no faces, silhouettes, crowd, reflections of people). ' +
-        'Environment / set plate only. Do not invent characters.'
+      ? 'PEOPLE: Environment / set plate only.'
       : n === 1
-        ? `PEOPLE: SINGLE-SUBJECT LOCK — only "${names[0]}" may appear. ` +
-          `The source image may contain OTHER people — DELETE them completely. ` +
-          `Do NOT promote a different face from the same still into the hero role. ` +
-          `Do NOT invent a new person. If "${names[0]}" was only a silhouette/shadow, keep that same figure identity (outline/wardrobe), do not replace with a random lead.`
-        : `PEOPLE: EXACTLY ${n} person(s) visible — ${names.join(', ')} only. ` +
-          `Remove every other person completely (no silhouettes, no reflections of strangers, no crowd). ` +
-          `No new characters. No face merges. Do not swap one locked character for another.`;
+        ? `PEOPLE: Exactly 1 person — "${names[0]}" only. No second figure. No crowd.`
+        : `PEOPLE: Exactly ${n} persons — ${names.join(', ')} only.`;
 
   const likeness =
     n > 0
       ? cast
           .map((c) => {
             const bits = [
-              c.name,
-              c.visibility && `visibility:${c.visibility}`,
-              c.subjectHint && `in-frame:${c.subjectHint}`,
+              `"${c.name}"`,
+              c.role && `role:${c.role}`,
+              c.subjectHint && `find them in plate as: ${c.subjectHint}`,
               c.faceNotes && `face:${c.faceNotes}`,
               c.wardrobe && `wardrobe:${c.wardrobe}`,
-              c.silhouette && `silhouette:${c.silhouette}`,
-              c.memoryNotes && `isolation:${c.memoryNotes.slice(0, 220)}`,
-              c.consistencyLock?.doNotChange,
+              c.silhouette && `build:${c.silhouette}`,
+              c.description && `sheet:${c.description.slice(0, 180)}`,
+              c.consistencyLock?.modelSheet && `lock:${c.consistencyLock.modelSheet.slice(0, 160)}`,
             ].filter(Boolean);
             return bits.join(' — ');
           })
-          .join(' | ')
+          .join(' || ')
       : '';
 
   const env = bundle.environment;
   const setBlock = env
-    ? `SET: Stay inside "${env.name}" (${env.placeType}). ` +
-      `Same walls, furniture layout, colors, windows, lighting fixtures, and signature props. ` +
-      `${env.consistencyLock?.doNotChange || 'Do not redesign the room.'} ` +
-      `Camera may move; architecture may not.`
-    : 'SET: Preserve the exact room/background from Image 1. Do not invent a different location.';
+    ? `SET: "${env.name}" (${env.placeType}). Same architecture/furniture/colors. Camera may move; room may not.`
+    : 'SET: Preserve room geometry from Image 1.';
 
   const imageRoles = bundle.labels
     .map((label, i) => `Image ${i + 1}: ${label}.`)
     .join(' ');
 
   const action = (shot.description || '').trim() || 'Continue the scene with a clear new beat.';
-  const camera = (shot.camera || shot.cameraDetailed || 'Same coverage, slight reframing').trim();
+  const camera = (shot.camera || shot.cameraDetailed || 'Medium shot, clear subject').trim();
   const emotion = (shot.emotion || shot.actingCues || '').trim();
   const dialogue = (shot.dialogue || '').trim();
 
-  const multiPersonPlateWarning =
-    n === 1
-      ? `SUBJECT ISOLATION: Reference stills may show multiple people. Subject is ONLY ${names[0]}. ` +
-        `Ignore every other face in the plate. Wrong-character swaps are a continuity failure.`
-      : n > 1
-        ? `SUBJECT ISOLATION: Keep only the listed cast (${names.join(', ')}). No substitutions.`
-        : '';
-
-  // Keep this SHORT — edit models ignore or fight giant bible dumps
   const parts = [
-    'SURGICAL IMAGE EDIT for series continuity. Edit the source image(s); do NOT generate a new concept-art scene.',
+    'SURGICAL IMAGE EDIT — series continuity. Edit source image(s); do not invent a new show.',
     imageRoles,
-    setBlock,
+    identityLaw,
+    banList,
     castBlock,
-    multiPersonPlateWarning,
-    likeness ? `LIKENESS LOCK: ${likeness}.` : '',
-    `ALLOWED CHANGES ONLY: framing/camera (${camera}); action (${action})${emotion ? `; performance (${emotion})` : ''}${
-      dialogue ? `; spoken moment ("${dialogue}")` : ''
+    setBlock,
+    likeness ? `CALLED CAST LIKENESS (must match): ${likeness}.` : '',
+    bundle.sharedPlateRisk
+      ? 'NOTE: Cast may share one multi-person discover still. Use name + face/wardrobe/subject hint to pick the CORRECT person; never default to the most prominent face if they are not the called cast.'
+      : '',
+    `DELTA ONLY: camera (${camera}); action (${action})${emotion ? `; performance (${emotion})` : ''}${
+      dialogue ? `; line ("${dialogue}")` : ''
     }.`,
-    'FORBIDDEN: extra people, swapping locked characters, random new objects, new furniture, new posters/screens, new animals, logos, watermarks, text overlays, celebrity lookalikes, redesigning the room.',
-    'Output one still that could cut next to Image 1 in the same episode.',
+    'FORBIDDEN: wrong-character swap, extra people, new furniture/props, logos, watermarks, celebrities.',
   ];
 
   return parts.filter(Boolean).join(' ');
@@ -298,10 +401,12 @@ export function buildStrictContinuityEditPrompt(
 
 /** @deprecated use buildStrictContinuityEditPrompt */
 export function continuityEditPrefix(bundle: ContinuityRefBundle, shot: Shot): string {
-  // Minimal fallback if old call sites remain
   if (!bundle.urls.length) return '';
   return buildStrictContinuityEditPrompt(
-    { characters: bundle.cast, environments: bundle.environment ? [bundle.environment] : [] } as Project,
+    {
+      characters: [...bundle.cast, ...(bundle.forbiddenCast || [])],
+      environments: bundle.environment ? [bundle.environment] : [],
+    } as Project,
     shot,
     bundle
   );

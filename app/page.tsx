@@ -1349,10 +1349,18 @@ export default function MovieDirector() {
       ? bridgeEditImageUrls(selectedProject, shot, fromShot, toShot)
       : continuity?.urls || [];
 
-    // Prefer single base plate for continuity (less invention than multi-ref remix)
+    // Prefer single base plate — multi-ref remix is a top cause of wrong-character swaps
     const continuityUrls =
       !isTransitionShot(shot) && continuity?.useEdit
-        ? continuity.urls.slice(0, continuity.strategy === 'prior-frame' ? 1 : Math.min(2, continuity.urls.length))
+        ? continuity.urls.slice(
+            0,
+            continuity.strategy === 'identity' ||
+              continuity.strategy === 'prior-frame' ||
+              continuity.strategy === 'set-plate' ||
+              continuity.sharedPlateRisk
+              ? 1
+              : Math.min(2, continuity.urls.length)
+          )
         : referenceImageUrls;
 
     const genMode = isTransitionShot(shot)
