@@ -49,9 +49,16 @@ export async function POST(req: NextRequest) {
   const quality: GenQuality = body.quality === 'draft' ? 'draft' : 'final';
   /** Public image URLs for edit / multi-image continuity (bridge frames) */
   const referenceImageUrls: string[] = Array.isArray(body.referenceImageUrls)
-    ? body.referenceImageUrls.filter((u: unknown) => typeof u === 'string' && /^https?:\/\//i.test(u as string)).slice(0, 3)
+    ? body.referenceImageUrls
+        .filter((u: unknown) => typeof u === 'string' && /^https?:\/\//i.test(u as string))
+        .slice(0, 5)
     : [];
-  const forceEdit = body.mode === 'edit' || body.mode === 'bridge' || referenceImageUrls.length > 0;
+  /** Continuity: any refs force image-edit — never cold text invent when plates exist */
+  const forceEdit =
+    body.mode === 'edit' ||
+    body.mode === 'bridge' ||
+    body.mode === 'continuity' ||
+    referenceImageUrls.length > 0;
 
   if (!prompt) return NextResponse.json({ error: 'prompt required' }, { status: 400 });
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });

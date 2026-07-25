@@ -152,7 +152,7 @@ export async function editImage(
 ): Promise<{ url: string; mode: string }> {
   const urls = [...new Set(imageUrls.filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u)))].slice(
     0,
-    3
+    5
   );
   if (!urls.length) {
     throw new Error('editImage requires at least one public image URL (neighbor frames)');

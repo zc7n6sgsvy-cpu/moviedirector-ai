@@ -22,12 +22,12 @@ import {
 import {
   characterToPack,
   createEnvironmentPack,
-  downloadPackJson,
   loadCharacterPacks,
   loadEnvironmentPacks,
   saveCharacterPacks,
   saveEnvironmentPacks,
 } from '@/lib/consistency-packs';
+import { bindEnvironmentAcrossProject } from '@/lib/continuity-refs';
 import { isTransitionShot } from '@/lib/transitions';
 
 type Props = {
@@ -199,80 +199,143 @@ export default function CreativeDiscoveryPanel({
 
   function lockSelected() {
     const keep = chars.filter((c) => c.selected);
-    if (!keep.length && !env?.selected) {
+    const envReady = env?.selected && (env.description?.trim() || env.name?.trim());
+    if (!keep.length && !envReady) {
       toast.error('Select at least one character or the environment');
       return;
     }
 
     const ref = discImage || undefined;
-    const newChars = keep.map((c) => discoveredToCharacter(c, ref));
-    const newEnv =
-      env?.selected && env.description
-        ? discoveredToEnvironment(env, ref)
-        : null;
-
-    onUpdate((p) => {
-      let characters = [...(p.characters || [])];
-      for (const nc of newChars) {
-        // Replace same name or append
-        characters = characters.filter((c) => c.name.toLowerCase() !== nc.name.toLowerCase());
-        characters.push(nc);
-      }
-      let environments = [...(p.environments || [])];
-      if (newEnv) {
-        environments = environments.filter((e) => e.name.toLowerCase() !== newEnv.name.toLowerCase());
-        environments.push(newEnv);
-      }
-
-      // Tag discover shot with new cast + set
-      const shots = (p.shots || []).map((s) => {
-        if (s.id !== discoverShotId) return s;
-        const ids = new Set([...(s.characterIds || []), ...newChars.map((c) => c.id)]);
-        return {
-          ...s,
-          characterIds: [...ids],
-          environmentId: newEnv?.id || s.environmentId,
-        };
-      });
-
-      return {
-        ...p,
-        characters,
-        environments,
-        defaultEnvironmentId: p.defaultEnvironmentId || newEnv?.id,
-        shots,
-      };
-    });
-
-    // Pack library
-    try {
-      const cPacks = loadCharacterPacks();
-      for (const nc of newChars) {
-        const pack = characterToPack(nc);
-        cPacks.unshift(pack);
-      }
-      saveCharacterPacks(cPacks.slice(0, 100));
-      if (newEnv) {
-        const ePacks = loadEnvironmentPacks();
-        const pack = createEnvironmentPack({
-          name: newEnv.name,
-          placeType: newEnv.placeType,
-          description: newEnv.description,
-          lighting: newEnv.lighting,
-          signatureProps: newEnv.signatureProps,
-          referenceImageUrl: newEnv.referenceImageUrl,
-        });
-        ePacks.unshift(pack);
-        saveEnvironmentPacks(ePacks.slice(0, 100));
-      }
-    } catch {
-      /* localStorage optional */
+    if (!ref) {
+      toast.error('Missing source frame URL — re-run Discover on a shot with a public frame');
+      return;
     }
 
-    toast.success(
-      `Locked ${keep.length} character(s)${env?.selected ? ' + set' : ''} into project & pack bank`,
-      { description: 'Insert them on empty shots 5–6 from CAST LOCK / SETS or shot chips.' }
-    );
+    try {
+      const newChars = keep.map((c) => discoveredToCharacter(c, ref));
+      // Always lock env when selected — fill description from name if vision returned thin data
+      const newEnv = envReady
+        ? discoveredToEnvironment(
+            {
+              ...env!,
+              name: env!.name?.trim() || 'Discovered set',
+              description:
+                env!.description?.trim() ||
+                `Series set locked from production still. Preserve architecture and props exactly.`,
+              placeType: env!.placeType || 'other',
+            },
+            ref
+          )
+        : null;
+
+      // Hard-require set plate URL on locked environment
+      if (newEnv && !newEnv.referenceImageUrl) {
+        newEnv.referenceImageUrl = ref;
+        newEnv.consistencyLock = {
+          ...(newEnv.consistencyLock || {
+            modelSheet: newEnv.description,
+            doNotChange: 'Never redesign this location.',
+            referenceUrls: [ref],
+            locked: true,
+          }),
+          referenceUrls: [ref, ...(newEnv.consistencyLock?.referenceUrls || [])].filter(
+            (u, i, a) => a.indexOf(u) === i
+          ),
+          locked: true,
+          lockedAt: new Date().toISOString(),
+        };
+      }
+
+      onUpdate((p) => {
+        let characters = [...(p.characters || [])];
+        for (const nc of newChars) {
+          characters = characters.filter((c) => c.name.toLowerCase() !== nc.name.toLowerCase());
+          characters.push(nc);
+        }
+        let environments = [...(p.environments || [])];
+        if (newEnv) {
+          environments = environments.filter(
+            (e) => e.name.toLowerCase() !== newEnv.name.toLowerCase() && e.id !== newEnv.id
+          );
+          environments.push(newEnv);
+        }
+
+        // Tag discover shot with new cast
+        let shots = (p.shots || []).map((s) => {
+          if (s.id !== discoverShotId) return s;
+          const ids = new Set([...(s.characterIds || []), ...newChars.map((c) => c.id)]);
+          return {
+            ...s,
+            characterIds: [...ids],
+            environmentId: newEnv?.id || s.environmentId,
+          };
+        });
+
+        let next: typeof p = {
+          ...p,
+          characters,
+          environments,
+          defaultEnvironmentId: newEnv?.id || p.defaultEnvironmentId,
+          shots,
+        };
+
+        // Bind locked set across empty + discover shots so shot 5–6 inherit it
+        if (newEnv) {
+          next = bindEnvironmentAcrossProject(next, newEnv.id, {
+            onlyEmpty: true,
+            alsoShotIds: discoverShotId ? [discoverShotId] : [],
+          });
+          // Force default to the set we just locked (user intent)
+          next = { ...next, defaultEnvironmentId: newEnv.id };
+        }
+
+        return next;
+      });
+
+      // Pack library (same ids / ref URLs for re-inject elsewhere)
+      try {
+        const cPacks = loadCharacterPacks();
+        for (const nc of newChars) {
+          cPacks.unshift(characterToPack(nc));
+        }
+        saveCharacterPacks(cPacks.slice(0, 100));
+        if (newEnv) {
+          const ePacks = loadEnvironmentPacks();
+          const pack = createEnvironmentPack({
+            name: newEnv.name,
+            placeType: newEnv.placeType,
+            description: newEnv.description,
+            lighting: newEnv.lighting,
+            signatureProps: newEnv.signatureProps,
+            referenceImageUrl: newEnv.referenceImageUrl || ref,
+          });
+          // Preserve project env id so re-inject matches
+          pack.id = newEnv.packId || newEnv.id;
+          pack.lock.referenceUrls = [
+            newEnv.referenceImageUrl || ref,
+            ...(pack.lock.referenceUrls || []),
+          ].filter((u, i, a) => a.indexOf(u) === i);
+          pack.lock.locked = true;
+          ePacks.unshift(pack);
+          saveEnvironmentPacks(ePacks.slice(0, 100));
+        }
+      } catch {
+        /* localStorage optional */
+      }
+
+      toast.success(
+        `Locked ${keep.length} character(s)${newEnv ? ' + set' : ''} into project & pack bank`,
+        {
+          description: newEnv
+            ? `"${newEnv.name}" is default set + bound on empty shots. Next frames image-edit from this plate.`
+            : 'Tag cast on shots. Generate with continuity lock.',
+        }
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Lock failed', {
+        description: 'Try Discover again, then lock. Need a public frame URL.',
+      });
+    }
   }
 
   function applyEnvToEmptyShots() {
@@ -281,15 +344,8 @@ export default function CreativeDiscoveryPanel({
       toast.error('No environment in project yet — discover & lock a set first');
       return;
     }
-    onUpdate((p) => ({
-      ...p,
-      shots: (p.shots || []).map((s) =>
-        !s.imageUrl && !s.videoUrl && !isTransitionShot(s)
-          ? { ...s, environmentId: envId }
-          : s
-      ),
-    }));
-    toast.success('Default set applied to empty story shots');
+    onUpdate((p) => bindEnvironmentAcrossProject(p, envId, { onlyEmpty: true }));
+    toast.success('Locked set applied to empty story shots');
   }
 
   return (

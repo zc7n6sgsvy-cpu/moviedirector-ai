@@ -240,14 +240,28 @@ export function discoveredToEnvironment(
   referenceImageUrl?: string
 ): EnvironmentLocation {
   const props = [d.signatureProps, d.items?.join(', ')].filter(Boolean).join('; ');
+  const desc =
+    (d.description || '').trim() ||
+    `Series location "${d.name || 'Set'}". Hold architecture, palette, and props fixed across all shots.`;
   const pack = createEnvironmentPack({
-    name: d.name,
-    placeType: d.placeType,
-    description: d.description,
+    name: (d.name || 'Discovered set').trim(),
+    placeType: d.placeType || 'other',
+    description: desc,
     lighting: d.lighting,
-    signatureProps: props,
+    signatureProps: props || undefined,
     referenceImageUrl,
+    doNotChange:
+      'Never redesign architecture, wall color, furniture layout, windows, flooring, or signature props. Same place every shot — series continuity plate.',
   });
+  // Always pin the discover frame as the sacred plate
+  if (referenceImageUrl) {
+    pack.lock.referenceUrls = [
+      referenceImageUrl,
+      ...pack.lock.referenceUrls.filter((u) => u !== referenceImageUrl),
+    ];
+    pack.lock.locked = true;
+    pack.lock.lockedAt = new Date().toISOString();
+  }
   return {
     id: pack.id,
     name: pack.name,
@@ -256,7 +270,7 @@ export function discoveredToEnvironment(
     lighting: pack.lighting,
     signatureProps: pack.signatureProps,
     referenceImageUrl: referenceImageUrl || pack.lock.referenceUrls[0],
-    consistencyLock: pack.lock,
+    consistencyLock: { ...pack.lock, locked: true },
     packId: pack.id,
   };
 }

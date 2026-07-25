@@ -45,6 +45,12 @@ import {
   type GenQuality,
 } from '@/lib/gen-economy';
 import {
+  collectContinuityRefs,
+  continuityEditPrefix,
+  ensureShotEnvironmentId,
+  promoteFrameToEnvPlate,
+} from '@/lib/continuity-refs';
+import {
   insertTransitionAfter,
   isTransitionShot,
   bridgeSeedImageUrl,
@@ -513,6 +519,8 @@ export default function MovieDirector() {
                     body: JSON.stringify({
                       shots: p.shots,
                       characters: p.characters,
+                      environments: p.environments,
+                      defaultEnvironmentId: p.defaultEnvironmentId,
                       script: p.script,
                       worldBible: p.worldBible,
                       continuity: p.continuity,
@@ -1252,7 +1260,8 @@ export default function MovieDirector() {
       }
     }
 
-    const shotForPrompt =
+    // Bind default set so empty shots inherit series environment before prompt/refs
+    let shotForPrompt =
       isTransitionShot(shot)
         ? {
             ...shot,
@@ -1265,9 +1274,21 @@ export default function MovieDirector() {
               toShot?.environmentId ||
               selectedProject.defaultEnvironmentId,
           }
-        : shot;
+        : ensureShotEnvironmentId(selectedProject, shot);
 
-    const prompt = generateFramePrompt(shotForPrompt);
+    // Persist auto-bound environmentId so the next gen/reload keeps the set
+    if (!isTransitionShot(shot) && shotForPrompt.environmentId && !shot.environmentId) {
+      updateShot(shotId, { environmentId: shotForPrompt.environmentId });
+    }
+
+    const continuity = isTransitionShot(shot)
+      ? { urls: [] as string[], labels: [] as string[], useEdit: false as boolean, hasEnvPlate: false, hasCastPlate: false, hasPriorFrame: false }
+      : collectContinuityRefs(selectedProject, shotForPrompt);
+
+    const basePrompt = generateFramePrompt(shotForPrompt);
+    const prompt = isTransitionShot(shot)
+      ? basePrompt
+      : [continuityEditPrefix(continuity, shotForPrompt), basePrompt].filter(Boolean).join(' ');
     navigator.clipboard.writeText(prompt).catch(() => {});
 
     if (!token) {
@@ -1285,6 +1306,13 @@ export default function MovieDirector() {
     }
 
     const cost = frameCreditCost(shot);
+    const continuityNote = !isTransitionShot(shot) && continuity.useEdit
+      ? ` Continuity lock: image-edit from ${continuity.urls.length} ref(s)${
+          continuity.hasEnvPlate ? ' · set plate' : ''
+        }${continuity.hasCastPlate ? ' · cast' : ''}${continuity.hasPriorFrame ? ' · prior frame' : ''}.`
+      : !isTransitionShot(shot) && shotForPrompt.environmentId
+        ? ' First plate for this set (no prior ref yet) — next shot in this set will image-edit from this frame.'
+        : '';
     if (
       !confirmSpend(
         'frame',
@@ -1292,10 +1320,10 @@ export default function MovieDirector() {
         isTransitionShot(shot)
           ? 'Bridge still: image-edit grounded in the previous (and next) frame — not a new scene.'
           : shot.imageUrl
-            ? 'Retake: half price because this shot already has a frame.'
+            ? `Retake: half price because this shot already has a frame.${continuityNote}`
             : genQuality === 'draft'
-              ? 'Draft: cheap look test. Switch to Final when locked.'
-              : 'Final quality still.'
+              ? `Draft: cheap look test. Switch to Final when locked.${continuityNote}`
+              : `Final quality still.${continuityNote}`
       )
     ) {
       return;
@@ -1303,12 +1331,20 @@ export default function MovieDirector() {
 
     const referenceImageUrls = isTransitionShot(shot)
       ? bridgeEditImageUrls(selectedProject, shot, fromShot, toShot)
-      : [];
+      : continuity.urls;
+
+    const genMode = isTransitionShot(shot)
+      ? 'bridge'
+      : referenceImageUrls.length
+        ? 'edit'
+        : 'generate';
 
     toast.loading(
       isTransitionShot(shot)
         ? `Editing bridge from neighbor frames (−${cost} cr)…`
-        : `Generating ${genQuality} frame (−${cost} cr)…`,
+        : referenceImageUrls.length
+          ? `Continuity frame from locked set/cast (−${cost} cr)…`
+          : `Generating ${genQuality} frame (−${cost} cr)…`,
       { id: `gen-img-${shotId}` }
     );
     try {
@@ -1321,7 +1357,7 @@ export default function MovieDirector() {
           shotId,
           quality: genQuality,
           aspectRatio: selectedProject.generationSettings?.aspectRatio || '16:9',
-          mode: isTransitionShot(shot) ? 'bridge' : 'generate',
+          mode: genMode,
           referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
         }),
       });
@@ -1336,12 +1372,29 @@ export default function MovieDirector() {
       }
       const nextShots = selectedProject.shots.map((s) =>
         s.id === shotId
-          ? { ...s, imageUrl: data.imageUrl as string, lastFrameQuality: genQuality }
+          ? {
+              ...s,
+              imageUrl: data.imageUrl as string,
+              lastFrameQuality: genQuality,
+              environmentId: shotForPrompt.environmentId || s.environmentId,
+            }
           : s
       );
-      updateShot(shotId, { imageUrl: data.imageUrl, lastFrameQuality: genQuality });
+      let nextProject: Project = {
+        ...selectedProject,
+        shots: nextShots,
+      };
+      // First successful frame in a set becomes the durable set plate
+      if (!isTransitionShot(shotForPrompt) && data.imageUrl) {
+        nextProject = promoteFrameToEnvPlate(
+          nextProject,
+          { ...shotForPrompt, imageUrl: data.imageUrl as string },
+          data.imageUrl as string
+        );
+      }
+      updateProject(() => nextProject);
       // Persist immediately — don't rely on debounced autosave surviving a hard refresh
-      void forceSaveProject({ ...selectedProject, shots: nextShots });
+      void forceSaveProject(nextProject);
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
       if (data.firstCut) {
         setFirstCutFree({
@@ -1353,9 +1406,16 @@ export default function MovieDirector() {
         data.freeSample
           ? 'Free First Cut frame ready'
           : data.creditsCharged
-            ? `Frame ready (−${data.creditsCharged} cr${data.isRetake ? ', retake' : ''})`
+            ? `Frame ready (−${data.creditsCharged} cr${data.isRetake ? ', retake' : ''}${data.usedEdit ? ', continuity edit' : ''})`
             : 'Frame generated',
-        { id: `gen-img-${shotId}` }
+        {
+          id: `gen-img-${shotId}`,
+          description: data.usedEdit
+            ? 'Held set/cast from reference plates.'
+            : shotForPrompt.environmentId
+              ? 'Set plate established — later shots will lock to this room.'
+              : undefined,
+        }
       );
       // After a free sample gen, gently offer completion/trial when budget low
       if (data.freeSample && data.firstCut?.freeImagesRemaining === 0 && data.firstCut?.freeVideosRemaining === 0) {
@@ -1396,16 +1456,29 @@ export default function MovieDirector() {
       }
     }
 
-    const prompt = generateVideoPrompt(
-      isTransitionShot(shot)
-        ? {
-            ...shot,
-            characterIds: shot.characterIds?.length
-              ? shot.characterIds
-              : preferredBridgeCharacterIds(fromShot, toShot),
-          }
-        : shot
-    );
+    const shotForVideo = isTransitionShot(shot)
+      ? {
+          ...shot,
+          characterIds: shot.characterIds?.length
+            ? shot.characterIds
+            : preferredBridgeCharacterIds(fromShot, toShot),
+          environmentId:
+            shot.environmentId ||
+            fromShot?.environmentId ||
+            toShot?.environmentId ||
+            selectedProject.defaultEnvironmentId,
+        }
+      : ensureShotEnvironmentId(selectedProject, shot);
+
+    if (!isTransitionShot(shot) && shotForVideo.environmentId && !shot.environmentId) {
+      updateShot(shotId, { environmentId: shotForVideo.environmentId });
+    }
+
+    const continuityVid = isTransitionShot(shot)
+      ? { urls: [] as string[] }
+      : collectContinuityRefs(selectedProject, shotForVideo);
+
+    const prompt = generateVideoPrompt(shotForVideo);
     navigator.clipboard.writeText(prompt).catch(() => {});
 
     if (!token) {
@@ -1424,15 +1497,10 @@ export default function MovieDirector() {
 
     const referenceImageUrls = isTransitionShot(shot)
       ? bridgeReferenceImages(selectedProject, shot, fromShot, toShot)
-      : ([
-          selectedProject.style?.referenceImageUrl,
-          ...(selectedProject.characters || [])
-            .filter(c => shot.characterIds?.includes(c.id))
-            .map(c => c.referenceImageUrl)
-            .filter(Boolean),
-        ].filter(Boolean) as string[]);
+      : continuityVid.urls;
 
     // Bridges: prefer image-to-video from previous frame — never text-to-video cold start
+    // Story shots: prefer i2v from this shot's frame (already continuity-locked still)
     const mode = isTransitionShot(shot)
       ? seedImage
         ? 'image-to-video'
@@ -1745,18 +1813,35 @@ export default function MovieDirector() {
       .filter(Boolean)
       .join(' ');
 
-    toast.loading(`Generating set ref: ${env.name}…`, { id: `env-ref-${envId}` });
+    // If we already have a plate (e.g. from Discover), reinforce via edit instead of inventing a new room
+    const existingPlate =
+      env.referenceImageUrl || env.consistencyLock?.referenceUrls?.[0] || undefined;
+    const platePrompt = existingPlate
+      ? `CONTINUITY: Image 1 is the LOCKED SET plate for "${env.name}". Produce a clean empty set reference plate of THE SAME room — same architecture, furniture, colors. Remove or de-emphasize people if present. ${prompt}`
+      : prompt;
+
+    toast.loading(
+      existingPlate ? `Reinforcing set plate: ${env.name}…` : `Generating set ref: ${env.name}…`,
+      { id: `env-ref-${envId}` }
+    );
     try {
       const res = await fetch('/api/generate/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ prompt, projectId: project.id, shotId: `env-${envId}` }),
+        body: JSON.stringify({
+          prompt: platePrompt,
+          projectId: project.id,
+          shotId: `env-${envId}`,
+          mode: existingPlate ? 'edit' : 'generate',
+          referenceImageUrls: existingPlate ? [existingPlate] : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Set ref failed');
-      updateProject((p) => ({
-        ...p,
-        environments: (p.environments || []).map((e) =>
+      const next = {
+        ...project,
+        defaultEnvironmentId: project.defaultEnvironmentId || envId,
+        environments: (project.environments || []).map((e) =>
           e.id === envId
             ? {
                 ...e,
@@ -1766,16 +1851,25 @@ export default function MovieDirector() {
                   doNotChange:
                     e.consistencyLock?.doNotChange ||
                     'Never redesign architecture, wall color, furniture layout, or signature props.',
-                  referenceUrls: [data.imageUrl as string],
+                  referenceUrls: [
+                    data.imageUrl as string,
+                    ...(e.consistencyLock?.referenceUrls || []),
+                    ...(e.referenceImageUrl ? [e.referenceImageUrl] : []),
+                  ].filter((u, i, a) => a.indexOf(u) === i),
                   locked: true,
                   lockedAt: new Date().toISOString(),
                 },
               }
             : e
         ),
-      }));
+      };
+      updateProject(() => next);
+      void forceSaveProject(next);
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
-      toast.success(`Set locked: ${env.name}`, { id: `env-ref-${envId}` });
+      toast.success(`Set locked: ${env.name}`, {
+        id: `env-ref-${envId}`,
+        description: 'Insert on all shots from SETS. New frames image-edit from this plate.',
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Set ref failed', { id: `env-ref-${envId}` });
     }

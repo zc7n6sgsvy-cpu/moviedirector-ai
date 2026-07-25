@@ -74,16 +74,26 @@ export default function EnvironmentStudio({
     };
     onUpdate((p) => ({
       ...p,
-      environments: [...(p.environments || []), loc],
-      defaultEnvironmentId: p.defaultEnvironmentId || loc.id,
+      environments: [...(p.environments || []).filter((e) => e.id !== loc.id), loc],
+      defaultEnvironmentId: loc.id,
+      // Bind new set onto empty shots so the next gen inherits it automatically
+      shots: (p.shots || []).map((s) =>
+        !s.imageUrl && !s.videoUrl && !s.environmentId ? { ...s, environmentId: loc.id } : s
+      ),
     }));
     const next = [pack, ...envPacks];
     setEnvPacks(next);
     saveEnvironmentPacks(next);
     setEnvForm({ name: '', placeType: 'office', description: '', lighting: '', props: '' });
     toast.success(`Locked set: ${loc.name}`, {
-      description: 'Insert on shots from SHOT LIST — independent of which cast is tagged.',
+      description: existingPlateHint(loc)
+        ? 'Plate attached. Generate frames — they image-edit from this set.'
+        : 'Set saved. Generate a frame or “Gen set ref”, then later shots will hold this room.',
     });
+  }
+
+  function existingPlateHint(loc: EnvironmentLocation) {
+    return !!(loc.referenceImageUrl || loc.consistencyLock?.referenceUrls?.length);
   }
 
   function insertOnAllShots(envId: string) {

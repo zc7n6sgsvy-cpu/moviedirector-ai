@@ -272,6 +272,21 @@ export function injectConsistencyIntoPrompt(project: Project, shot: Shot, base: 
   const env = (project.environments || []).find((e) => e.id === envId);
   if (env) {
     parts.push(environmentConsistencyBlock(env as EnvironmentPack));
+    // Hard series law even without an image plate yet
+    parts.push(
+      `SERIES SET LOCK: Always the same location "${env.name}". ` +
+        `Architecture, furniture, wall colors, windows, and signature props must match prior shots of this set. ` +
+        `You may change camera angle and action only — never invent a different room or building.`
+    );
+    if (env.referenceImageUrl || env.consistencyLock?.referenceUrls?.length) {
+      parts.push(
+        "A set reference plate is provided as an image input — match that plate's geometry and palette exactly."
+      );
+    }
+  } else if ((project.environments || []).length > 0) {
+    parts.push(
+      'WARNING: No environment bound on this shot. Assign a locked SET so the room stays consistent.'
+    );
   }
 
   const chars = (project.characters || []).filter((c) => shot.characterIds?.includes(c.id));
@@ -279,6 +294,12 @@ export function injectConsistencyIntoPrompt(project: Project, shot: Shot, base: 
     parts.push(
       `CAST CONSISTENCY: ${chars.map(characterConsistencyBlock).join(' | ')}`
     );
+    const withRefs = chars.filter((c) => c.referenceImageUrl || c.consistencyLock?.referenceUrls?.length);
+    if (withRefs.length) {
+      parts.push(
+        `Character reference plates provided for: ${withRefs.map((c) => c.name).join(', ')}. Match faces and wardrobe exactly.`
+      );
+    }
   }
 
   const multi = multiCharacterInteractionBlock(project, shot);
