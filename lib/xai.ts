@@ -139,21 +139,37 @@ export async function generateImage(prompt: string, aspectRatio = '16:9'): Promi
   return { url };
 }
 
+export type EditImageOptions = {
+  aspectRatio?: string;
+  /**
+   * continuity: single-image edit FIRST (best for "don't invent extras").
+   * multi: try multi-ref first (bridges / compositing).
+   * auto: multi if 2+ urls else single.
+   */
+  strategy?: 'continuity' | 'multi' | 'auto';
+};
+
 /**
  * Image edit / multi-image edit — critical for continuity bridges.
  * NEVER falls back to text-to-image (that invents unrelated scenes).
- * Tries several request shapes because multi-image payload varies by model version.
  * @see https://docs.x.ai/developers/model-capabilities/images/editing
  */
 export async function editImage(
   prompt: string,
   imageUrls: string[],
-  aspectRatio = '16:9'
+  aspectRatioOrOpts: string | EditImageOptions = '16:9'
 ): Promise<{ url: string; mode: string }> {
-  const urls = [...new Set(imageUrls.filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u)))].slice(
-    0,
-    5
-  );
+  const opts: EditImageOptions =
+    typeof aspectRatioOrOpts === 'string'
+      ? { aspectRatio: aspectRatioOrOpts, strategy: 'auto' }
+      : aspectRatioOrOpts;
+  const aspectRatio = opts.aspectRatio || '16:9';
+  const strategy = opts.strategy || 'auto';
+
+  // Hard cap 3 per xAI docs — extra refs increase remix/invention
+  const urls = [
+    ...new Set(imageUrls.filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u))),
+  ].slice(0, 3);
   if (!urls.length) {
     throw new Error('editImage requires at least one public image URL (neighbor frames)');
   }
@@ -165,34 +181,7 @@ export async function editImage(
 
   const imgObj = (url: string) => ({ url, type: 'image_url' as const });
 
-  // Try shapes in order until one works
-  const attempts: { mode: string; body: Record<string, unknown> }[] = [];
-
-  if (urls.length >= 2) {
-    attempts.push({
-      mode: 'multi-image-array',
-      body: {
-        model,
-        prompt,
-        image: urls.map(imgObj),
-        n: 1,
-        aspect_ratio: aspectRatio,
-      },
-    });
-    attempts.push({
-      mode: 'multi-images-key',
-      body: {
-        model,
-        prompt,
-        images: urls.map(imgObj),
-        n: 1,
-        aspect_ratio: aspectRatio,
-      },
-    });
-  }
-
-  // Single-image edit from frame A (most reliable) — prompt must describe bridge to B
-  attempts.push({
+  const singleA = {
     mode: 'single-from-A',
     body: {
       model,
@@ -201,20 +190,60 @@ export async function editImage(
       n: 1,
       aspect_ratio: aspectRatio,
     },
-  });
+  };
+  const multiArray =
+    urls.length >= 2
+      ? {
+          mode: 'multi-image-array',
+          body: {
+            model,
+            prompt,
+            image: urls.map(imgObj),
+            n: 1,
+            aspect_ratio: aspectRatio,
+          },
+        }
+      : null;
+  const multiKey =
+    urls.length >= 2
+      ? {
+          mode: 'multi-images-key',
+          body: {
+            model,
+            prompt,
+            images: urls.map(imgObj),
+            n: 1,
+            aspect_ratio: aspectRatio,
+          },
+        }
+      : null;
+  const singleB =
+    urls.length >= 2
+      ? {
+          mode: 'single-from-B',
+          body: {
+            model,
+            prompt: `Ground this edit in the provided frame. ${prompt}`,
+            image: imgObj(urls[1]),
+            n: 1,
+            aspect_ratio: aspectRatio,
+          },
+        }
+      : null;
 
-  // If we have B, also try editing from B only as last multi attempt before fail
-  if (urls.length >= 2) {
-    attempts.push({
-      mode: 'single-from-B',
-      body: {
-        model,
-        prompt: `Ground this edit in the provided frame as SCENE B. ${prompt}`,
-        image: imgObj(urls[1]),
-        n: 1,
-        aspect_ratio: aspectRatio,
-      },
-    });
+  // Continuity: surgical single-base edit first — multi-ref often invents extras
+  const preferSingle = strategy === 'continuity' || (strategy === 'auto' && urls.length === 1);
+  const attempts: { mode: string; body: Record<string, unknown> }[] = [];
+  if (preferSingle) {
+    attempts.push(singleA);
+    if (multiArray) attempts.push(multiArray);
+    if (multiKey) attempts.push(multiKey);
+    if (singleB) attempts.push(singleB);
+  } else {
+    if (multiArray) attempts.push(multiArray);
+    if (multiKey) attempts.push(multiKey);
+    attempts.push(singleA);
+    if (singleB) attempts.push(singleB);
   }
 
   const errors: string[] = [];

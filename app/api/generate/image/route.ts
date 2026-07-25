@@ -51,17 +51,36 @@ export async function POST(req: NextRequest) {
   const referenceImageUrls: string[] = Array.isArray(body.referenceImageUrls)
     ? body.referenceImageUrls
         .filter((u: unknown) => typeof u === 'string' && /^https?:\/\//i.test(u as string))
-        .slice(0, 5)
+        .slice(0, 3)
     : [];
-  /** Continuity: any refs force image-edit — never cold text invent when plates exist */
+  const modeHint = String(body.mode || 'generate');
+  /** Continuity / bridge: never cold text invent when plates exist */
   const forceEdit =
-    body.mode === 'edit' ||
-    body.mode === 'bridge' ||
-    body.mode === 'continuity' ||
+    modeHint === 'edit' ||
+    modeHint === 'bridge' ||
+    modeHint === 'continuity' ||
     referenceImageUrls.length > 0;
+  const editStrategy =
+    modeHint === 'continuity' || modeHint === 'edit'
+      ? 'continuity'
+      : modeHint === 'bridge'
+        ? 'multi'
+        : referenceImageUrls.length
+          ? 'continuity'
+          : 'auto';
 
   if (!prompt) return NextResponse.json({ error: 'prompt required' }, { status: 400 });
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 });
+  if (forceEdit && !referenceImageUrls.length) {
+    return NextResponse.json(
+      {
+        error:
+          'Continuity lock requires a set/cast plate or prior frame. Discover & lock, or generate one seed frame first.',
+        code: 'CONTINUITY_PLATE_REQUIRED',
+      },
+      { status: 400 }
+    );
+  }
 
   const access = await verifyProjectAccess(auth.userId, projectId);
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
@@ -76,8 +95,14 @@ export async function POST(req: NextRequest) {
     const charge = await chargeGeneration(auth.userId, 'image', credits, {
       projectId,
       shotId,
-      metadata: { quality, isRetake, mode: forceEdit ? 'edit' : 'generate', refs: referenceImageUrls.length },
-      description: `Image ${quality}${forceEdit ? ' edit/bridge' : ''}${isRetake ? ' retake' : ''} (${credits} credits)`,
+      metadata: {
+        quality,
+        isRetake,
+        mode: forceEdit ? modeHint || 'edit' : 'generate',
+        refs: referenceImageUrls.length,
+        editStrategy,
+      },
+      description: `Image ${quality}${forceEdit ? ` ${modeHint || 'edit'}` : ''}${isRetake ? ' retake' : ''} (${credits} credits)`,
     });
     chargedAmount = charge.creditsCharged;
     wasFree = charge.free;
@@ -86,8 +111,11 @@ export async function POST(req: NextRequest) {
     let usedEdit = false;
     let editMode: string | undefined;
     if (forceEdit && referenceImageUrls.length) {
-      // Bridges/edits: hard-fail if edit fails — never invent a new scene via text-only
-      const edited = await editImage(prompt, referenceImageUrls, aspectRatio || '16:9');
+      // Hard-fail if edit fails — NEVER invent a new scene via text-only
+      const edited = await editImage(prompt, referenceImageUrls, {
+        aspectRatio: aspectRatio || '16:9',
+        strategy: editStrategy as 'continuity' | 'multi' | 'auto',
+      });
       result = { url: edited.url };
       usedEdit = true;
       editMode = edited.mode;

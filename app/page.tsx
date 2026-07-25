@@ -45,9 +45,9 @@ import {
   type GenQuality,
 } from '@/lib/gen-economy';
 import {
+  buildStrictContinuityEditPrompt,
   collectContinuityRefs,
-  continuityEditPrefix,
-  ensureShotEnvironmentId,
+  ensureShotContinuityBindings,
   promoteFrameToEnvPlate,
 } from '@/lib/continuity-refs';
 import {
@@ -1260,7 +1260,7 @@ export default function MovieDirector() {
       }
     }
 
-    // Bind default set so empty shots inherit series environment before prompt/refs
+    // Bind default set + inherit cast from prior same-set shot (empty cast = random people)
     let shotForPrompt =
       isTransitionShot(shot)
         ? {
@@ -1274,21 +1274,31 @@ export default function MovieDirector() {
               toShot?.environmentId ||
               selectedProject.defaultEnvironmentId,
           }
-        : ensureShotEnvironmentId(selectedProject, shot);
+        : ensureShotContinuityBindings(selectedProject, shot);
 
-    // Persist auto-bound environmentId so the next gen/reload keeps the set
-    if (!isTransitionShot(shot) && shotForPrompt.environmentId && !shot.environmentId) {
-      updateShot(shotId, { environmentId: shotForPrompt.environmentId });
+    // Persist auto-bound set/cast so reload keeps the lock
+    if (
+      !isTransitionShot(shot) &&
+      (shotForPrompt.environmentId !== shot.environmentId ||
+        JSON.stringify(shotForPrompt.characterIds || []) !== JSON.stringify(shot.characterIds || []))
+    ) {
+      updateShot(shotId, {
+        environmentId: shotForPrompt.environmentId,
+        characterIds: shotForPrompt.characterIds,
+      });
     }
 
     const continuity = isTransitionShot(shot)
-      ? { urls: [] as string[], labels: [] as string[], useEdit: false as boolean, hasEnvPlate: false, hasCastPlate: false, hasPriorFrame: false }
+      ? null
       : collectContinuityRefs(selectedProject, shotForPrompt);
 
-    const basePrompt = generateFramePrompt(shotForPrompt);
+    // CRITICAL: continuity path uses SHORT surgical edit prompt only.
+    // Full "masterpiece sitcom" prompts fight the plate and invent extras/props.
     const prompt = isTransitionShot(shot)
-      ? basePrompt
-      : [continuityEditPrefix(continuity, shotForPrompt), basePrompt].filter(Boolean).join(' ');
+      ? generateFramePrompt(shotForPrompt)
+      : continuity?.useEdit
+        ? buildStrictContinuityEditPrompt(selectedProject, shotForPrompt, continuity)
+        : generateFramePrompt(shotForPrompt);
     navigator.clipboard.writeText(prompt).catch(() => {});
 
     if (!token) {
@@ -1305,14 +1315,23 @@ export default function MovieDirector() {
       return;
     }
 
+    // Refuse free invent when user clearly has locks but no plate URL yet
+    if (
+      !isTransitionShot(shot) &&
+      !continuity?.useEdit &&
+      ((shotForPrompt.characterIds || []).length > 0 || shotForPrompt.environmentId) &&
+      (selectedProject.environments || []).some((e) => e.id === shotForPrompt.environmentId && !e.referenceImageUrl)
+    ) {
+      // First frame of a text-only set is allowed (establishes plate). No block.
+    }
+
     const cost = frameCreditCost(shot);
-    const continuityNote = !isTransitionShot(shot) && continuity.useEdit
-      ? ` Continuity lock: image-edit from ${continuity.urls.length} ref(s)${
-          continuity.hasEnvPlate ? ' · set plate' : ''
-        }${continuity.hasCastPlate ? ' · cast' : ''}${continuity.hasPriorFrame ? ' · prior frame' : ''}.`
-      : !isTransitionShot(shot) && shotForPrompt.environmentId
-        ? ' First plate for this set (no prior ref yet) — next shot in this set will image-edit from this frame.'
-        : '';
+    const continuityNote =
+      !isTransitionShot(shot) && continuity?.useEdit
+        ? ` SURGICAL continuity edit from ${continuity.strategy} (${continuity.urls.length} plate${continuity.urls.length > 1 ? 's' : ''}). Exact cast count enforced.`
+        : !isTransitionShot(shot) && shotForPrompt.environmentId
+          ? ' Seed frame for this set (no prior plate) — next shot will edit THIS frame, not invent a new room.'
+          : '';
     if (
       !confirmSpend(
         'frame',
@@ -1331,19 +1350,25 @@ export default function MovieDirector() {
 
     const referenceImageUrls = isTransitionShot(shot)
       ? bridgeEditImageUrls(selectedProject, shot, fromShot, toShot)
-      : continuity.urls;
+      : continuity?.urls || [];
+
+    // Prefer single base plate for continuity (less invention than multi-ref remix)
+    const continuityUrls =
+      !isTransitionShot(shot) && continuity?.useEdit
+        ? continuity.urls.slice(0, continuity.strategy === 'prior-frame' ? 1 : Math.min(2, continuity.urls.length))
+        : referenceImageUrls;
 
     const genMode = isTransitionShot(shot)
       ? 'bridge'
-      : referenceImageUrls.length
-        ? 'edit'
+      : continuityUrls.length
+        ? 'continuity'
         : 'generate';
 
     toast.loading(
       isTransitionShot(shot)
         ? `Editing bridge from neighbor frames (−${cost} cr)…`
-        : referenceImageUrls.length
-          ? `Continuity frame from locked set/cast (−${cost} cr)…`
+        : continuityUrls.length
+          ? `Surgical continuity edit (−${cost} cr)…`
           : `Generating ${genQuality} frame (−${cost} cr)…`,
       { id: `gen-img-${shotId}` }
     );
@@ -1358,7 +1383,7 @@ export default function MovieDirector() {
           quality: genQuality,
           aspectRatio: selectedProject.generationSettings?.aspectRatio || '16:9',
           mode: genMode,
-          referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+          referenceImageUrls: continuityUrls.length ? continuityUrls : undefined,
         }),
       });
       const data = await res.json();
@@ -1370,6 +1395,11 @@ export default function MovieDirector() {
         }
         throw new Error(data.error || 'Image generation failed');
       }
+      if (!isTransitionShot(shot) && genMode === 'continuity' && !data.usedEdit) {
+        toast.error('Continuity edit did not run — frame may invent. Retry.', {
+          id: `gen-img-${shotId}`,
+        });
+      }
       const nextShots = selectedProject.shots.map((s) =>
         s.id === shotId
           ? {
@@ -1377,6 +1407,7 @@ export default function MovieDirector() {
               imageUrl: data.imageUrl as string,
               lastFrameQuality: genQuality,
               environmentId: shotForPrompt.environmentId || s.environmentId,
+              characterIds: shotForPrompt.characterIds || s.characterIds,
             }
           : s
       );
@@ -1384,7 +1415,7 @@ export default function MovieDirector() {
         ...selectedProject,
         shots: nextShots,
       };
-      // First successful frame in a set becomes the durable set plate
+      // First successful frame becomes durable set/cast plate
       if (!isTransitionShot(shotForPrompt) && data.imageUrl) {
         nextProject = promoteFrameToEnvPlate(
           nextProject,
@@ -1393,7 +1424,6 @@ export default function MovieDirector() {
         );
       }
       updateProject(() => nextProject);
-      // Persist immediately — don't rely on debounced autosave surviving a hard refresh
       void forceSaveProject(nextProject);
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
       if (data.firstCut) {
@@ -1406,14 +1436,14 @@ export default function MovieDirector() {
         data.freeSample
           ? 'Free First Cut frame ready'
           : data.creditsCharged
-            ? `Frame ready (−${data.creditsCharged} cr${data.isRetake ? ', retake' : ''}${data.usedEdit ? ', continuity edit' : ''})`
+            ? `Frame ready (−${data.creditsCharged} cr${data.isRetake ? ', retake' : ''}${data.usedEdit ? `, ${data.editMode || 'edit'}` : ''})`
             : 'Frame generated',
         {
           id: `gen-img-${shotId}`,
           description: data.usedEdit
-            ? 'Held set/cast from reference plates.'
+            ? `Surgical edit (${data.editMode || 'plate'}). Exact cast; no free invent.`
             : shotForPrompt.environmentId
-              ? 'Set plate established — later shots will lock to this room.'
+              ? 'Seed plate saved — next shot edits this frame.'
               : undefined,
         }
       );
@@ -1468,7 +1498,7 @@ export default function MovieDirector() {
             toShot?.environmentId ||
             selectedProject.defaultEnvironmentId,
         }
-      : ensureShotEnvironmentId(selectedProject, shot);
+      : ensureShotContinuityBindings(selectedProject, shot);
 
     if (!isTransitionShot(shot) && shotForVideo.environmentId && !shot.environmentId) {
       updateShot(shotId, { environmentId: shotForVideo.environmentId });
