@@ -26,9 +26,12 @@ type Panel = 'cast' | 'agent' | 'library';
 
 type Props = {
   project: Project;
+  token?: string | null;
   onUpdate: (updater: (p: Project) => Project) => void;
   onGenerateRef?: (charId: string) => void;
+  onCaptureSoloPlate?: (charId: string) => void;
   onGoStoryboard?: () => void;
+  onCreditBalance?: (n: number) => void;
 };
 
 const emptyAnswers = (): AgentAnswers => ({
@@ -45,8 +48,10 @@ const emptyAnswers = (): AgentAnswers => ({
 
 export default function CharacterConsistencyStudio({
   project,
+  token,
   onUpdate,
   onGenerateRef,
+  onCaptureSoloPlate,
   onGoStoryboard,
 }: Props) {
   const [panel, setPanel] = useState<Panel>('cast');
@@ -189,7 +194,12 @@ export default function CharacterConsistencyStudio({
               No cast. Use Character agent, Ensemble, or inject a pack — then lock.
             </div>
           ) : (
-            cast.map((c) => (
+            cast.map((c) => {
+              const hasSolo = (c.tags || []).includes('solo-plate');
+              const needsSolo =
+                (c.tags || []).includes('needs-solo-plate') ||
+                ((c.tags || []).includes('discovered') && !hasSolo);
+              return (
               <div key={c.id} className="director-card p-5 rounded-3xl flex flex-wrap gap-4 items-start">
                 {c.referenceImageUrl && (
                   <img
@@ -210,9 +220,27 @@ export default function CharacterConsistencyStudio({
                         unlocked
                       </span>
                     )}
+                    {hasSolo ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--cyan)]/20 text-[var(--cyan)]">
+                        SOLO PLATE
+                      </span>
+                    ) : needsSolo ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-200">
+                        NEEDS SOLO PLATE
+                      </span>
+                    ) : null}
                   </div>
-                  <div className="text-xs text-white/50">{c.role}</div>
+                  <div className="text-xs text-white/50">
+                    {c.role}
+                    {c.subjectHint ? ` · ${c.subjectHint}` : ''}
+                    {c.visibility ? ` · ${c.visibility}` : ''}
+                  </div>
                   <p className="text-sm text-white/70 mt-1 line-clamp-2">{c.description}</p>
+                  {needsSolo && (
+                    <p className="text-[10px] text-amber-200/80 mt-1">
+                      Still on a group still — capture a solo plate so reinsert keeps this identity.
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-col gap-2">
                   <button type="button" onClick={() => lockChar(c.id)} className="btn-gold text-black text-xs px-4 py-2 rounded-xl">
@@ -221,6 +249,15 @@ export default function CharacterConsistencyStudio({
                   <button type="button" onClick={() => insertOnAllShots(c.id)} className="btn-outline text-xs px-4 py-2 rounded-xl">
                     Insert on all shots
                   </button>
+                  {(needsSolo || c.referenceImageUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => onCaptureSoloPlate?.(c.id)}
+                      className="btn-outline text-xs px-4 py-2 rounded-xl border-amber-400/40 text-amber-100"
+                    >
+                      Capture solo plate
+                    </button>
+                  )}
                   <button type="button" onClick={() => onGenerateRef?.(c.id)} className="btn-outline text-xs px-4 py-2 rounded-xl">
                     Gen reference
                   </button>
@@ -229,7 +266,8 @@ export default function CharacterConsistencyStudio({
                   </button>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
           <p className="text-xs text-white/40">
             On SHOT LIST: tap cast chips to insert/remove characters per shot. Multiple tags = multi-character

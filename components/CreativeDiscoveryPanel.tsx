@@ -16,7 +16,6 @@ import {
   type DiscoveredCharacter,
   type DiscoveredEnvironment,
   type FrameDiscovery,
-  discoveredToCharacter,
   discoveredToEnvironment,
 } from '@/lib/discover-from-frame';
 import {
@@ -27,8 +26,13 @@ import {
   saveCharacterPacks,
   saveEnvironmentPacks,
 } from '@/lib/consistency-packs';
+import {
+  applySoloPlateToCharacter,
+  captureCharacterFromDiscover,
+} from '@/lib/character-capture';
 import { bindEnvironmentAcrossProject } from '@/lib/continuity-refs';
 import { isTransitionShot } from '@/lib/transitions';
+import type { Character } from '@/lib/types';
 
 type Props = {
   project: Project;
@@ -197,7 +201,83 @@ export default function CreativeDiscoveryPanel({
     );
   }
 
-  function lockSelected() {
+  /**
+   * Extract a dedicated solo plate so reinsert uses THIS person, not a group still.
+   */
+  async function captureSoloPlates(charsToPlate: Character[], sourceUrl: string) {
+    if (!token || !charsToPlate.length) return;
+    toast.loading(`Capturing solo plates for ${charsToPlate.length} character(s)…`, {
+      id: 'solo-plates',
+    });
+    let ok = 0;
+    let fail = 0;
+    for (const ch of charsToPlate) {
+      try {
+        const res = await fetch('/api/generate/character-plate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            projectId: project.id,
+            sourceImageUrl: sourceUrl,
+            characterId: ch.id,
+            name: ch.name,
+            role: ch.role,
+            faceNotes: ch.faceNotes,
+            wardrobe: ch.wardrobe,
+            subjectHint: ch.subjectHint,
+            description: ch.description,
+            visibility: ch.visibility,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Solo plate failed');
+        if (typeof data.creditBalance === 'number') onCreditBalance?.(data.creditBalance);
+
+        onUpdate((p) => {
+          const updated = (p.characters || []).map((c) =>
+            c.id === ch.id ? applySoloPlateToCharacter(c, data.imageUrl as string) : c
+          );
+          // Refresh pack bank with solo plate
+          try {
+            const done = updated.find((c) => c.id === ch.id);
+            if (done) {
+              const packs = loadCharacterPacks();
+              const pack = characterToPack(done);
+              saveCharacterPacks([pack, ...packs.filter((x) => x.id !== pack.id)].slice(0, 100));
+            }
+          } catch {
+            /* ignore */
+          }
+          return { ...p, characters: updated };
+        });
+        ok++;
+      } catch (e) {
+        fail++;
+        console.error('solo plate', ch.name, e);
+      }
+    }
+    if (ok && !fail) {
+      toast.success(`Solo plates ready for ${ok} character(s)`, {
+        id: 'solo-plates',
+        description: 'Reinsert on any shot — identity uses dedicated plate, not the group still.',
+      });
+    } else if (ok && fail) {
+      toast.success(`Solo plates: ${ok} ok, ${fail} failed`, {
+        id: 'solo-plates',
+        description: 'Retry failed ones from CAST LOCK → Capture solo plate.',
+      });
+    } else {
+      toast.error('Solo plate capture failed', {
+        id: 'solo-plates',
+        description: 'Identity cards still saved. Retry from CAST LOCK when you have credits.',
+      });
+    }
+  }
+
+  async function lockSelected() {
     const keep = chars.filter((c) => c.selected);
     const envReady = env?.selected && (env.description?.trim() || env.name?.trim());
     if (!keep.length && !envReady) {
@@ -212,8 +292,8 @@ export default function CreativeDiscoveryPanel({
     }
 
     try {
-      const newChars = keep.map((c) => discoveredToCharacter(c, ref));
-      // Always lock env when selected — fill description from name if vision returned thin data
+      // Rich identity capture (provisional group-still ref until solo plates land)
+      const newChars = keep.map((c) => captureCharacterFromDiscover(c, ref));
       const newEnv = envReady
         ? discoveredToEnvironment(
             {
@@ -228,7 +308,6 @@ export default function CreativeDiscoveryPanel({
           )
         : null;
 
-      // Hard-require set plate URL on locked environment
       if (newEnv && !newEnv.referenceImageUrl) {
         newEnv.referenceImageUrl = ref;
         newEnv.consistencyLock = {
@@ -260,26 +339,14 @@ export default function CreativeDiscoveryPanel({
           environments.push(newEnv);
         }
 
-        // Tag discover shot with new cast
-        let shots = (p.shots || []).map((s) => {
-          if (s.id !== discoverShotId) return s;
-          const ids = new Set([...(s.characterIds || []), ...newChars.map((c) => c.id)]);
-          return {
-            ...s,
-            characterIds: [...ids],
-            environmentId: newEnv?.id || s.environmentId,
-          };
-        });
-
         let next: typeof p = {
           ...p,
           characters,
           environments,
           defaultEnvironmentId: newEnv?.id || p.defaultEnvironmentId,
-          shots,
+          shots: p.shots,
         };
 
-        // Bind locked set across empty + discover shots so shot 5–6 inherit it
         if (newEnv) {
           next = bindEnvironmentAcrossProject(next, newEnv.id, {
             onlyEmpty: true,
@@ -288,8 +355,6 @@ export default function CreativeDiscoveryPanel({
           next = { ...next, defaultEnvironmentId: newEnv.id };
         }
 
-        // Only stamp cast onto the discover shot itself — never auto-fill other shots.
-        // Empty cast on other shots = director wants set-only / chooses cast later.
         if (newChars.length && discoverShotId) {
           const castIds = newChars.map((c) => c.id);
           next = {
@@ -308,7 +373,6 @@ export default function CreativeDiscoveryPanel({
         return next;
       });
 
-      // Pack library (same ids / ref URLs for re-inject elsewhere)
       try {
         const cPacks = loadCharacterPacks();
         for (const nc of newChars) {
@@ -325,7 +389,6 @@ export default function CreativeDiscoveryPanel({
             signatureProps: newEnv.signatureProps,
             referenceImageUrl: newEnv.referenceImageUrl || ref,
           });
-          // Preserve project env id so re-inject matches
           pack.id = newEnv.packId || newEnv.id;
           pack.lock.referenceUrls = [
             newEnv.referenceImageUrl || ref,
@@ -339,19 +402,27 @@ export default function CreativeDiscoveryPanel({
         /* localStorage optional */
       }
 
-      const weakLocks = keep.filter(
-        (c) => c.visibility === 'silhouette' || c.visibility === 'background'
-      );
       toast.success(
-        `Locked ${keep.length} character(s)${newEnv ? ' + set' : ''} into project & pack bank`,
+        `Captured ${keep.length} character(s)${newEnv ? ' + set' : ''} into bank`,
         {
-          description: weakLocks.length
-            ? `Warning: ${weakLocks.map((c) => c.suggestedName).join(', ')} are silhouette/background — gen a clear face ref before starring them or the model may pick another face.`
+          description: newChars.length
+            ? 'Extracting solo plates next (makes reinsert identity-safe)…'
             : newEnv
-              ? `"${newEnv.name}" is default set + bound on empty shots. Next frames image-edit from this plate.`
-              : 'Tag only the cast you want on each shot. Empty cast = set only.',
+              ? `"${newEnv.name}" locked as default set.`
+              : undefined,
         }
       );
+
+      // Auto solo plates — this is what makes Dane reinsert as Dane
+      if (newChars.length && token) {
+        if (!token) onAuthRequired?.();
+        else void captureSoloPlates(newChars, ref);
+      } else if (newChars.length && !token) {
+        onAuthRequired?.();
+        toast.message('Sign in to capture solo plates', {
+          description: 'Identity cards saved; solo plates need a cloud gen.',
+        });
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Lock failed', {
         description: 'Try Discover again, then lock. Need a public frame URL.',

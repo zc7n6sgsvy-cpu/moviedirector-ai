@@ -220,11 +220,16 @@ export function collectContinuityRefs(project: Project, shot: Shot): ContinuityR
       role: 'base',
     });
     strategy = 'identity';
-  } else if (wantsCast && cast.length === 1 && characterRefUrls(cast[0])[0] && !sharedPlateRisk) {
-    // Dedicated solo plate for this character
+  } else if (
+    wantsCast &&
+    cast.length === 1 &&
+    characterRefUrls(cast[0])[0] &&
+    ((cast[0].tags || []).includes('solo-plate') || !sharedPlateRisk)
+  ) {
+    // Dedicated solo plate (preferred reinsert path after capture)
     queue.push({
       url: characterRefUrls(cast[0])[0],
-      label: `Dedicated likeness plate for "${cast[0].name}" only`,
+      label: `SOLO PLATE for "${cast[0].name}" only — primary identity`,
       role: 'base',
     });
     strategy = 'cast-plate';

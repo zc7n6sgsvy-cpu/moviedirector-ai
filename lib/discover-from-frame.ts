@@ -6,7 +6,8 @@
  */
 
 import type { Character, EnvironmentLocation } from '@/lib/types';
-import { lockCharacter, createEnvironmentPack } from '@/lib/consistency-packs';
+import { createEnvironmentPack } from '@/lib/consistency-packs';
+import { captureCharacterFromDiscover } from '@/lib/character-capture';
 
 /** How clearly visible this person is in the source still */
 export type CharacterVisibility = 'hero' | 'supporting' | 'silhouette' | 'background';
@@ -259,36 +260,11 @@ export function discoveredToCharacter(
   d: DiscoveredCharacter,
   referenceImageUrl?: string
 ): Character {
-  const visibility = d.visibility || 'supporting';
-  const subjectHint = d.subjectHint || '';
-  const isolation =
-    `Subject isolation: only the figure matching "${d.suggestedName}"` +
-    (subjectHint ? ` (${subjectHint})` : '') +
-    `. visibility=${visibility}. ` +
-    (visibility === 'silhouette' || visibility === 'background'
-      ? 'Source plate has no clear face — treat as atmospheric figure; do not swap for a different hero face from the same still.'
-      : 'If the source still has multiple people, keep ONLY this subject; remove all others.');
-
-  const char: Character = {
-    id: `char-${Math.random().toString(36).slice(2, 11)}`,
-    name: d.suggestedName,
-    role: d.role,
-    description: d.description || `${d.faceNotes}. ${d.wardrobe}`.trim(),
-    faceNotes: d.faceNotes,
-    wardrobe: d.wardrobe,
-    personality: d.personality,
-    silhouette: visibility === 'silhouette' ? d.faceNotes || subjectHint || 'silhouette' : undefined,
-    referenceImageUrl,
-    subjectHint: subjectHint || undefined,
-    visibility,
-    memoryNotes: isolation,
-    tags: [
-      'discovered',
-      visibility,
-      ...(visibility === 'silhouette' || visibility === 'background' ? ['weak-plate'] : []),
-    ],
-  };
-  return lockCharacter(char);
+  if (!referenceImageUrl) {
+    throw new Error('Character capture requires a source frame URL');
+  }
+  // Full capture card — solo plate is generated after lock via character-plate API
+  return captureCharacterFromDiscover(d, referenceImageUrl);
 }
 
 export function discoveredToEnvironment(

@@ -1766,6 +1766,11 @@ export default function MovieDirector() {
     const char = (project.characters || []).find(c => c.id === charId);
     if (!char) return;
 
+    // Prefer extract-from-source when we already have a still (group or prior)
+    if (char.referenceImageUrl && /^https?:\/\//i.test(char.referenceImageUrl)) {
+      return captureSoloPlate(charId);
+    }
+
     const prompt = generateCharacterPrompt(char);
     navigator.clipboard.writeText(prompt).catch(() => {});
 
@@ -1797,10 +1802,13 @@ export default function MovieDirector() {
       }
       updateCharacter(charId, {
         referenceImageUrl: data.imageUrl,
+        tags: [...new Set([...(char.tags || []), 'solo-plate', 'captured'])].filter(
+          (t) => t !== 'needs-solo-plate'
+        ),
         consistencyLock: {
           modelSheet: `${char.name} — ${char.description}`,
           doNotChange: char.faceNotes || char.wardrobe || 'Exact face, hair, wardrobe from this reference',
-          referenceUrls: [data.imageUrl as string],
+          referenceUrls: [data.imageUrl as string, ...(char.consistencyLock?.referenceUrls || [])],
           locked: true,
           lockedAt: new Date().toISOString(),
         },
@@ -1808,10 +1816,9 @@ export default function MovieDirector() {
       if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
       toast.success(
         data.freeSample ? `Free ref ready for ${char.name}` : `Reference ready for ${char.name}`,
-        { id: `char-ref-${charId}`, description: 'Character auto-locked to this reference.' }
+        { id: `char-ref-${charId}`, description: 'Solo plate locked for reinsert.' }
       );
     } catch (err) {
-      // Fallback placeholder so offline/demo still works
       const seed = charId.slice(0, 6);
       updateCharacter(charId, {
         referenceImageUrl: `https://picsum.photos/seed/char${seed}/600/600`,
@@ -1819,6 +1826,97 @@ export default function MovieDirector() {
       toast.error(err instanceof Error ? err.message : 'Generation failed', {
         id: `char-ref-${charId}`,
         description: 'Prompt copied. Placeholder image set for layout.',
+      });
+    }
+  }
+
+  /**
+   * Extract a dedicated solo plate from this character's source still
+   * so reinsert always uses THEIR identity — not another face from a group frame.
+   */
+  async function captureSoloPlate(charId: string) {
+    const project = selectedProject;
+    if (!project || !token) {
+      toast.error('Sign in to capture a solo character plate');
+      setShowAuthModal(true);
+      return;
+    }
+    if (!isValidObjectId(project.id)) {
+      toast.error('Cloud project required');
+      return;
+    }
+    const char = (project.characters || []).find((c) => c.id === charId);
+    if (!char) return;
+    const source =
+      char.referenceImageUrl ||
+      char.consistencyLock?.referenceUrls?.[0] ||
+      // Fall back to any framed shot that tags this character
+      project.shots?.find((s) => s.characterIds?.includes(charId) && s.imageUrl)?.imageUrl;
+    if (!source || !/^https?:\/\//i.test(source)) {
+      toast.error('No source still for this character', {
+        description: 'Discover from a frame first, or gen a reference.',
+      });
+      return;
+    }
+
+    toast.loading(`Capturing solo plate: ${char.name}…`, { id: `solo-${charId}` });
+    try {
+      const res = await fetch('/api/generate/character-plate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          projectId: project.id,
+          sourceImageUrl: source,
+          characterId: char.id,
+          name: char.name,
+          role: char.role,
+          faceNotes: char.faceNotes,
+          wardrobe: char.wardrobe,
+          subjectHint: char.subjectHint,
+          description: char.description,
+          visibility: char.visibility,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === 'INSUFFICIENT_CREDITS' || data.code === 'FREE_SAMPLE_EXHAUSTED') {
+          toast.dismiss(`solo-${charId}`);
+          handleGenPaywall(data);
+          return;
+        }
+        throw new Error(data.error || 'Solo plate failed');
+      }
+      const plateUrl = data.imageUrl as string;
+      updateCharacter(charId, {
+        referenceImageUrl: plateUrl,
+        tags: [...new Set([...(char.tags || []).filter((t) => t !== 'needs-solo-plate'), 'solo-plate', 'captured'])],
+        memoryNotes: [char.memoryNotes, 'SOLO PLATE captured — primary reference for reinserts.']
+          .filter(Boolean)
+          .join(' '),
+        consistencyLock: {
+          modelSheet:
+            char.consistencyLock?.modelSheet ||
+            `${char.name} — ${char.description}`,
+          doNotChange:
+            char.consistencyLock?.doNotChange ||
+            'Never alter face, hair, body, wardrobe. Never swap for another cast member.',
+          referenceUrls: [
+            plateUrl,
+            ...(char.consistencyLock?.referenceUrls || []),
+            ...(char.referenceImageUrl ? [char.referenceImageUrl] : []),
+          ].filter((u, i, a) => u && a.indexOf(u) === i),
+          locked: true,
+          lockedAt: new Date().toISOString(),
+        },
+      });
+      if (typeof data.creditBalance === 'number') setCreditBalance(data.creditBalance);
+      toast.success(`Solo plate ready: ${char.name}`, {
+        id: `solo-${charId}`,
+        description: 'Tag them on shots — continuity uses this plate, not the group still.',
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Solo plate failed', {
+        id: `solo-${charId}`,
       });
     }
   }
@@ -4367,8 +4465,10 @@ Alternative: Set up Render worker for one-click server-side render.
             {activeTab === 'chars' && (
               <CharacterConsistencyStudio
                 project={selectedProject}
+                token={token}
                 onUpdate={updateProject}
                 onGenerateRef={generateCharacterRef}
+                onCaptureSoloPlate={captureSoloPlate}
                 onGoStoryboard={() => setActiveTab('storyboard')}
               />
             )}

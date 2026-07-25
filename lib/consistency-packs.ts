@@ -95,6 +95,8 @@ export function characterToPack(c: Character): CharacterPack {
     c.name,
     c.role && `(${c.role})`,
     c.medium && `medium:${c.medium}`,
+    c.visibility && `visibility:${c.visibility}`,
+    c.subjectHint && `position:${c.subjectHint}`,
     c.description,
     c.faceNotes && `face:${c.faceNotes}`,
     c.silhouette && `silhouette:${c.silhouette}`,
@@ -106,6 +108,11 @@ export function characterToPack(c: Character): CharacterPack {
     .filter(Boolean)
     .join(' — ');
 
+  const refs = [
+    c.referenceImageUrl || '',
+    ...(c.consistencyLock?.referenceUrls || []),
+  ].filter((u, i, a) => u && a.indexOf(u) === i);
+
   return {
     id: `cp-${c.id || uid()}`,
     kind: 'character',
@@ -115,15 +122,17 @@ export function characterToPack(c: Character): CharacterPack {
     medium: c.medium,
     description: c.description || '',
     lock: {
-      modelSheet,
+      modelSheet: c.consistencyLock?.modelSheet || modelSheet,
       doNotChange:
-        c.faceNotes || c.wardrobe
-          ? `Never alter: ${[c.faceNotes, c.wardrobe, c.silhouette, c.signatureProp].filter(Boolean).join('; ')}`
-          : 'Never alter face, hair, body type, or signature wardrobe from the model sheet.',
-      referenceUrls: c.referenceImageUrl ? [c.referenceImageUrl] : [],
+        c.consistencyLock?.doNotChange ||
+        (c.faceNotes || c.wardrobe
+          ? `Never alter: ${[c.faceNotes, c.wardrobe, c.silhouette, c.signatureProp, c.subjectHint && `position ${c.subjectHint}`].filter(Boolean).join('; ')}. Never swap for another cast member.`
+          : 'Never alter face, hair, body type, or signature wardrobe. Never swap identity.'),
+      referenceUrls: refs,
       locked: true,
-      lockedAt: new Date().toISOString(),
+      lockedAt: c.consistencyLock?.lockedAt || new Date().toISOString(),
     },
+    // Full character blob for perfect re-inject (subjectHint, visibility, memory, voice…)
     character: { ...c },
     createdAt: new Date().toISOString(),
     tags: c.tags,
@@ -141,8 +150,10 @@ export function lockCharacter(c: Character): Character {
 
 export function packToCharacter(pack: CharacterPack, newId?: string): Character {
   const base = pack.character || {};
+  // Prefer solo plate (first lock URL after capture) — pack stores primary first
+  const primaryRef = pack.lock.referenceUrls[0] || base.referenceImageUrl;
   return {
-    id: newId || `char-${uid()}`,
+    id: newId || base.id || `char-${uid()}`,
     name: pack.name,
     role: pack.role || base.role || 'Character',
     description: pack.description || base.description || '',
@@ -160,8 +171,18 @@ export function packToCharacter(pack: CharacterPack, newId?: string): Character 
     relationships: base.relationships,
     memoryNotes: base.memoryNotes,
     memoryFacts: base.memoryFacts,
-    referenceImageUrl: pack.lock.referenceUrls[0] || base.referenceImageUrl,
-    consistencyLock: { ...pack.lock, locked: true },
+    subjectHint: base.subjectHint,
+    visibility: base.visibility,
+    referenceImageUrl: primaryRef,
+    consistencyLock: {
+      ...pack.lock,
+      locked: true,
+      referenceUrls: pack.lock.referenceUrls?.length
+        ? pack.lock.referenceUrls
+        : primaryRef
+          ? [primaryRef]
+          : [],
+    },
     packId: pack.id,
     voiceAxes: base.voiceAxes,
     voiceVariants: base.voiceVariants,
