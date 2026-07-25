@@ -339,12 +339,17 @@ export default function CreativeDiscoveryPanel({
         /* localStorage optional */
       }
 
+      const weakLocks = keep.filter(
+        (c) => c.visibility === 'silhouette' || c.visibility === 'background'
+      );
       toast.success(
         `Locked ${keep.length} character(s)${newEnv ? ' + set' : ''} into project & pack bank`,
         {
-          description: newEnv
-            ? `"${newEnv.name}" is default set + bound on empty shots. Next frames image-edit from this plate.`
-            : 'Tag cast on shots. Generate with continuity lock.',
+          description: weakLocks.length
+            ? `Warning: ${weakLocks.map((c) => c.suggestedName).join(', ')} are silhouette/background — gen a clear face ref before starring them or the model may pick another face.`
+            : newEnv
+              ? `"${newEnv.name}" is default set + bound on empty shots. Next frames image-edit from this plate.`
+              : 'Tag only the cast you want on each shot. Empty cast = set only.',
         }
       );
     } catch (e) {
@@ -477,12 +482,20 @@ export default function CreativeDiscoveryPanel({
             {discImage && (
               <img src={discImage} alt="Source" className="max-h-36 rounded-xl border border-white/10" />
             )}
-            <div className="text-[10px] uppercase text-white/40">Characters (uncheck to discard)</div>
-            {chars.map((c) => (
+            <div className="text-[10px] uppercase text-white/40">
+              Characters (silhouettes default off — weak face plates swap easily)
+            </div>
+            {chars.map((c) => {
+              const weak = c.visibility === 'silhouette' || c.visibility === 'background';
+              return (
               <div
                 key={c.tempId}
                 className={`p-3 rounded-xl border flex gap-3 ${
-                  c.selected ? 'border-[var(--gold)]/40 bg-[var(--gold)]/5' : 'border-white/10 opacity-50'
+                  c.selected
+                    ? weak
+                      ? 'border-amber-400/50 bg-amber-400/5'
+                      : 'border-[var(--gold)]/40 bg-[var(--gold)]/5'
+                    : 'border-white/10 opacity-50'
                 }`}
               >
                 <input
@@ -498,11 +511,33 @@ export default function CreativeDiscoveryPanel({
                     onChange={(e) => renameChar(c.tempId, e.target.value)}
                     placeholder="Name"
                   />
-                  <div className="text-[11px] text-white/50">{c.role}</div>
+                  <div className="flex flex-wrap gap-1.5 items-center text-[11px] text-white/50">
+                    <span>{c.role}</span>
+                    {c.visibility && (
+                      <span
+                        className={`text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                          weak
+                            ? 'bg-amber-400/20 text-amber-200'
+                            : 'bg-white/10 text-white/55'
+                        }`}
+                      >
+                        {c.visibility}
+                      </span>
+                    )}
+                    {c.subjectHint && (
+                      <span className="text-white/40">· {c.subjectHint}</span>
+                    )}
+                  </div>
+                  {weak && (
+                    <div className="text-[10px] text-amber-200/80">
+                      Shadow / background figure — locking may swap faces. Prefer a clear hero face, or gen a dedicated ref first.
+                    </div>
+                  )}
                   <div className="text-[11px] text-white/60 line-clamp-2">{c.description}</div>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {env && (
               <div
                 className={`p-3 rounded-xl border ${

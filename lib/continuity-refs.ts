@@ -225,9 +225,14 @@ export function buildStrictContinuityEditPrompt(
       ? 'PEOPLE: EMPTY CAST LOCK — director wants NO characters in this shot. ' +
         'Remove every person from the frame completely (no faces, silhouettes, crowd, reflections of people). ' +
         'Environment / set plate only. Do not invent characters.'
-      : `PEOPLE: EXACTLY ${n} person(s) visible — ${names.join(', ')} only. ` +
-        `Remove every other person completely (no silhouettes, no reflections of strangers, no crowd). ` +
-        `No new characters. No face merges.`;
+      : n === 1
+        ? `PEOPLE: SINGLE-SUBJECT LOCK — only "${names[0]}" may appear. ` +
+          `The source image may contain OTHER people — DELETE them completely. ` +
+          `Do NOT promote a different face from the same still into the hero role. ` +
+          `Do NOT invent a new person. If "${names[0]}" was only a silhouette/shadow, keep that same figure identity (outline/wardrobe), do not replace with a random lead.`
+        : `PEOPLE: EXACTLY ${n} person(s) visible — ${names.join(', ')} only. ` +
+          `Remove every other person completely (no silhouettes, no reflections of strangers, no crowd). ` +
+          `No new characters. No face merges. Do not swap one locked character for another.`;
 
   const likeness =
     n > 0
@@ -235,8 +240,12 @@ export function buildStrictContinuityEditPrompt(
           .map((c) => {
             const bits = [
               c.name,
+              c.visibility && `visibility:${c.visibility}`,
+              c.subjectHint && `in-frame:${c.subjectHint}`,
               c.faceNotes && `face:${c.faceNotes}`,
               c.wardrobe && `wardrobe:${c.wardrobe}`,
+              c.silhouette && `silhouette:${c.silhouette}`,
+              c.memoryNotes && `isolation:${c.memoryNotes.slice(0, 220)}`,
               c.consistencyLock?.doNotChange,
             ].filter(Boolean);
             return bits.join(' — ');
@@ -261,17 +270,26 @@ export function buildStrictContinuityEditPrompt(
   const emotion = (shot.emotion || shot.actingCues || '').trim();
   const dialogue = (shot.dialogue || '').trim();
 
+  const multiPersonPlateWarning =
+    n === 1
+      ? `SUBJECT ISOLATION: Reference stills may show multiple people. Subject is ONLY ${names[0]}. ` +
+        `Ignore every other face in the plate. Wrong-character swaps are a continuity failure.`
+      : n > 1
+        ? `SUBJECT ISOLATION: Keep only the listed cast (${names.join(', ')}). No substitutions.`
+        : '';
+
   // Keep this SHORT — edit models ignore or fight giant bible dumps
   const parts = [
     'SURGICAL IMAGE EDIT for series continuity. Edit the source image(s); do NOT generate a new concept-art scene.',
     imageRoles,
     setBlock,
     castBlock,
+    multiPersonPlateWarning,
     likeness ? `LIKENESS LOCK: ${likeness}.` : '',
     `ALLOWED CHANGES ONLY: framing/camera (${camera}); action (${action})${emotion ? `; performance (${emotion})` : ''}${
       dialogue ? `; spoken moment ("${dialogue}")` : ''
     }.`,
-    'FORBIDDEN: extra people, random new objects, new furniture, new posters/screens, new animals, logos, watermarks, text overlays, celebrity lookalikes, redesigning the room.',
+    'FORBIDDEN: extra people, swapping locked characters, random new objects, new furniture, new posters/screens, new animals, logos, watermarks, text overlays, celebrity lookalikes, redesigning the room.',
     'Output one still that could cut next to Image 1 in the same episode.',
   ];
 

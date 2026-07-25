@@ -110,6 +110,14 @@ export interface Character {
   signatureProp?: string;
   personality?: string;
   catchphrase?: string;
+  /**
+   * Where this person sits in their reference still
+   * (e.g. "far left doorway", "only a shadow silhouette").
+   * Critical when multiple people share one discover frame.
+   */
+  subjectHint?: string;
+  /** hero | supporting | silhouette | background — from Discover */
+  visibility?: 'hero' | 'supporting' | 'silhouette' | 'background';
   /** Lab: what they want in this episode/film */
   objective?: string;
   /** Lab: how they change */

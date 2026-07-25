@@ -8,6 +8,9 @@
 import type { Character, EnvironmentLocation } from '@/lib/types';
 import { lockCharacter, createEnvironmentPack } from '@/lib/consistency-packs';
 
+/** How clearly visible this person is in the source still */
+export type CharacterVisibility = 'hero' | 'supporting' | 'silhouette' | 'background';
+
 export type DiscoveredCharacter = {
   tempId: string;
   suggestedName: string;
@@ -16,7 +19,10 @@ export type DiscoveredCharacter = {
   wardrobe: string;
   description: string;
   personality?: string;
-  /** Include in cast by default */
+  /** Where they sit in frame (left third, far background, etc.) */
+  subjectHint?: string;
+  visibility?: CharacterVisibility;
+  /** Include in cast by default — silhouettes default OFF */
   selected: boolean;
 };
 
@@ -46,7 +52,9 @@ Shape:
     {
       "suggestedName": "short original name (not a celebrity)",
       "role": "role in scene",
-      "faceNotes": "face, hair, age vibe, distinguishing marks",
+      "visibility": "hero|supporting|silhouette|background",
+      "subjectHint": "where in frame e.g. left third / far doorway / only a shadow",
+      "faceNotes": "face, hair, age vibe, distinguishing marks — or 'no readable face' if silhouette",
       "wardrobe": "exact clothes visible",
       "description": "full model-sheet one paragraph",
       "personality": "optional vibe from pose/expression"
@@ -63,7 +71,13 @@ Shape:
   "rawNotes": "optional continuity notes"
 }
 Rules:
-- List EVERY distinct person clearly visible (up to 8).
+- List distinct people (up to 8). Prefer clear faces first.
+- visibility MUST be accurate:
+  - hero = main subject, face readable
+  - supporting = secondary but face/body readable
+  - silhouette = shadow, rim-light outline, no readable face
+  - background = tiny distant figure, mostly atmosphere
+- For silhouette/background: still list them but mark visibility correctly. Do NOT invent face details you cannot see.
 - Do NOT invent people who are not in the image.
 - Names must be original (no real celebrities).
 - Environment describes THIS location for series reuse.
@@ -163,6 +177,21 @@ export function extractJsonValue(text: string): unknown {
   throw new Error('Unclosed JSON in model response');
 }
 
+function normalizeVisibility(raw: unknown, faceNotes: string, role: string): CharacterVisibility {
+  const v = String(raw || '').toLowerCase().trim();
+  if (v === 'hero' || v === 'supporting' || v === 'silhouette' || v === 'background') {
+    return v;
+  }
+  const blob = `${faceNotes} ${role}`.toLowerCase();
+  if (/silhouette|shadow|rim.?light|no (readable )?face|faceless|outline only/.test(blob)) {
+    return 'silhouette';
+  }
+  if (/background|distant|tiny|out of focus|blurred figure/.test(blob)) {
+    return 'background';
+  }
+  return 'supporting';
+}
+
 export function parseDiscoveryJson(text: string): FrameDiscovery {
   let data: {
     characters?: Array<Record<string, string | undefined>>;
@@ -183,18 +212,27 @@ export function parseDiscoveryJson(text: string): FrameDiscovery {
     );
   }
 
-  const characters: DiscoveredCharacter[] = (data.characters || []).map((c, i) => ({
-    tempId: `disc-${Date.now().toString(36)}-${i}`,
-    suggestedName: String(c.suggestedName || c.name || `Character ${i + 1}`).trim(),
-    role: String(c.role || 'Ensemble').trim(),
-    faceNotes: String(c.faceNotes || '').trim(),
-    wardrobe: String(c.wardrobe || '').trim(),
-    description: String(
-      c.description || [c.faceNotes, c.wardrobe].filter(Boolean).join('. ')
-    ).trim(),
-    personality: c.personality ? String(c.personality).trim() : undefined,
-    selected: true,
-  }));
+  const characters: DiscoveredCharacter[] = (data.characters || []).map((c, i) => {
+    const faceNotes = String(c.faceNotes || '').trim();
+    const role = String(c.role || 'Ensemble').trim();
+    const visibility = normalizeVisibility(c.visibility, faceNotes, role);
+    // Silhouettes / pure background blobs default OFF — locking them as lead faces fails
+    const selected = visibility === 'hero' || visibility === 'supporting';
+    return {
+      tempId: `disc-${Date.now().toString(36)}-${i}`,
+      suggestedName: String(c.suggestedName || c.name || `Character ${i + 1}`).trim(),
+      role,
+      faceNotes,
+      wardrobe: String(c.wardrobe || '').trim(),
+      description: String(
+        c.description || [faceNotes, c.wardrobe].filter(Boolean).join('. ')
+      ).trim(),
+      personality: c.personality ? String(c.personality).trim() : undefined,
+      subjectHint: c.subjectHint ? String(c.subjectHint).trim() : undefined,
+      visibility,
+      selected,
+    };
+  });
 
   let environment: DiscoveredEnvironment | null = null;
   if (data.environment && typeof data.environment === 'object') {
@@ -221,6 +259,16 @@ export function discoveredToCharacter(
   d: DiscoveredCharacter,
   referenceImageUrl?: string
 ): Character {
+  const visibility = d.visibility || 'supporting';
+  const subjectHint = d.subjectHint || '';
+  const isolation =
+    `Subject isolation: only the figure matching "${d.suggestedName}"` +
+    (subjectHint ? ` (${subjectHint})` : '') +
+    `. visibility=${visibility}. ` +
+    (visibility === 'silhouette' || visibility === 'background'
+      ? 'Source plate has no clear face — treat as atmospheric figure; do not swap for a different hero face from the same still.'
+      : 'If the source still has multiple people, keep ONLY this subject; remove all others.');
+
   const char: Character = {
     id: `char-${Math.random().toString(36).slice(2, 11)}`,
     name: d.suggestedName,
@@ -229,8 +277,16 @@ export function discoveredToCharacter(
     faceNotes: d.faceNotes,
     wardrobe: d.wardrobe,
     personality: d.personality,
+    silhouette: visibility === 'silhouette' ? d.faceNotes || subjectHint || 'silhouette' : undefined,
     referenceImageUrl,
-    tags: ['discovered'],
+    subjectHint: subjectHint || undefined,
+    visibility,
+    memoryNotes: isolation,
+    tags: [
+      'discovered',
+      visibility,
+      ...(visibility === 'silhouette' || visibility === 'background' ? ['weak-plate'] : []),
+    ],
   };
   return lockCharacter(char);
 }
