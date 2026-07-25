@@ -1260,7 +1260,7 @@ export default function MovieDirector() {
       }
     }
 
-    // Bind default set + inherit cast from prior same-set shot (empty cast = random people)
+    // Bind default SET only — never auto-select cast chips (user may want env-only)
     let shotForPrompt =
       isTransitionShot(shot)
         ? {
@@ -1276,16 +1276,13 @@ export default function MovieDirector() {
           }
         : ensureShotContinuityBindings(selectedProject, shot);
 
-    // Persist auto-bound set/cast so reload keeps the lock
+    // Persist auto-bound set only — do not rewrite characterIds
     if (
       !isTransitionShot(shot) &&
-      (shotForPrompt.environmentId !== shot.environmentId ||
-        JSON.stringify(shotForPrompt.characterIds || []) !== JSON.stringify(shot.characterIds || []))
+      shotForPrompt.environmentId &&
+      shotForPrompt.environmentId !== shot.environmentId
     ) {
-      updateShot(shotId, {
-        environmentId: shotForPrompt.environmentId,
-        characterIds: shotForPrompt.characterIds,
-      });
+      updateShot(shotId, { environmentId: shotForPrompt.environmentId });
     }
 
     const continuity = isTransitionShot(shot)
@@ -1407,7 +1404,8 @@ export default function MovieDirector() {
               imageUrl: data.imageUrl as string,
               lastFrameQuality: genQuality,
               environmentId: shotForPrompt.environmentId || s.environmentId,
-              characterIds: shotForPrompt.characterIds || s.characterIds,
+              // Keep user's cast selection as-is (including empty = set-only)
+              characterIds: s.characterIds || [],
             }
           : s
       );
@@ -3946,7 +3944,7 @@ Alternative: Set up Render worker for one-click server-side render.
                               </button>
                             ) : (
                               <>
-                                <div className="flex flex-wrap gap-1">
+                                <div className="flex flex-wrap gap-1 items-center">
                                   {(selectedProject.characters || []).map((char) => {
                                     const active = (shot.characterIds || []).includes(char.id);
                                     return (
@@ -3965,6 +3963,19 @@ Alternative: Set up Render worker for one-click server-side render.
                                       </button>
                                     );
                                   })}
+                                  {(shot.characterIds || []).length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => updateShot(shot.id, { characterIds: [] })}
+                                      className="text-[10px] px-2 py-px rounded border border-white/25 text-white/55 hover:border-white/50"
+                                      title="Clear cast — set / environment only"
+                                    >
+                                      Clear cast
+                                    </button>
+                                  )}
+                                  {!(shot.characterIds || []).length && (
+                                    <span className="text-[9px] text-white/35">None · set only</span>
+                                  )}
                                 </div>
                                 {(shot.characterIds || []).length >= 2 && (
                                   <input

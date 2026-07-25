@@ -117,22 +117,33 @@ export function collectContinuityRefs(project: Project, shot: Shot): ContinuityR
   type Labeled = { url: string; label: string; role: 'base' | 'cast' | 'set' };
   const queue: Labeled[] = [];
 
-  // 0) Retake: edit THIS shot's existing frame (don't invent a new room/cast)
+  const wantsCast = cast.length > 0;
+
+  // 0) Retake: edit THIS shot's existing frame
   if (isPublicUrl(shot.imageUrl)) {
     queue.push({
       url: shot.imageUrl!,
-      label: 'THIS shot plate — retake/edit; keep room + people locked',
+      label: wantsCast
+        ? 'THIS shot plate — retake/edit; keep room + selected cast locked'
+        : 'THIS shot plate — retake; SET ONLY — remove people if present',
+      role: 'base',
+    });
+  } else if (!wantsCast && envUrls[0]) {
+    // Set-only: prefer clean set plate over a prior shot full of people
+    queue.push({
+      url: envUrls[0],
+      label: `LOCKED SET plate "${env?.name || 'set'}" — empty room geometry; no characters`,
       role: 'base',
     });
   } else if (prior) {
-    // 1) Prior same-set production still — strongest continuity for a NEW shot
     queue.push({
       url: prior,
-      label: 'LOCKED production still (same set / prior shot) — edit THIS image',
+      label: wantsCast
+        ? 'LOCKED production still (prior shot) — edit THIS image'
+        : 'Prior still for SET continuity — REMOVE all people; keep only the room',
       role: 'base',
     });
   } else if (envUrls[0]) {
-    // 2) Dedicated set plate
     queue.push({
       url: envUrls[0],
       label: `LOCKED SET plate "${env?.name || 'set'}" — keep this room geometry`,
@@ -140,31 +151,19 @@ export function collectContinuityRefs(project: Project, shot: Shot): ContinuityR
     });
   }
 
-  // 3) Character sheets only if different from base (helps face lock without remixing room)
-  for (const c of cast) {
-    const u = characterRefUrls(c)[0];
-    if (!u) continue;
-    if (prior && u.split('?')[0] === prior.split('?')[0]) continue;
-    if (envUrls[0] && u.split('?')[0] === envUrls[0].split('?')[0]) continue;
-    queue.push({
-      url: u,
-      label: `LOCKED CHARACTER likeness "${c.name}" — match this face/wardrobe only`,
-      role: 'cast',
-    });
-  }
-
-  // If still empty, last resort: any cast plate as base
-  if (!queue.length) {
+  // Character sheets only when director actually selected cast on this shot
+  if (wantsCast) {
     for (const c of cast) {
       const u = characterRefUrls(c)[0];
-      if (u) {
-        queue.push({
-          url: u,
-          label: `LOCKED CHARACTER "${c.name}" — do not invent a different person`,
-          role: 'base',
-        });
-        break;
-      }
+      if (!u) continue;
+      if (prior && u.split('?')[0] === prior.split('?')[0]) continue;
+      if (envUrls[0] && u.split('?')[0] === envUrls[0].split('?')[0]) continue;
+      if (shot.imageUrl && u.split('?')[0] === shot.imageUrl.split('?')[0]) continue;
+      queue.push({
+        url: u,
+        label: `LOCKED CHARACTER likeness "${c.name}" — match this face/wardrobe only`,
+        role: 'cast',
+      });
     }
   }
 
@@ -223,7 +222,9 @@ export function buildStrictContinuityEditPrompt(
 
   const castBlock =
     n === 0
-      ? 'PEOPLE: Do not add any new people. If people already appear in Image 1, keep only those identities — no extras, no crowd, no background figures.'
+      ? 'PEOPLE: EMPTY CAST LOCK — director wants NO characters in this shot. ' +
+        'Remove every person from the frame completely (no faces, silhouettes, crowd, reflections of people). ' +
+        'Environment / set plate only. Do not invent characters.'
       : `PEOPLE: EXACTLY ${n} person(s) visible — ${names.join(', ')} only. ` +
         `Remove every other person completely (no silhouettes, no reflections of strangers, no crowd). ` +
         `No new characters. No face merges.`;
@@ -289,8 +290,11 @@ export function continuityEditPrefix(bundle: ContinuityRefBundle, shot: Shot): s
 }
 
 /**
- * Bind default set + inherit cast from previous same-set shot when empty.
- * Critical: empty characterIds ⇒ model invents random people.
+ * Bind default SET only. Never auto-select cast.
+ *
+ * Empty characterIds is intentional director choice = environment-only /
+ * no forced people. Auto-filling cast (prior shot / all chars ≤4) was a bug:
+ * user picks "den" only → regenerate forced "chaos" + "background" chips.
  */
 export function ensureShotContinuityBindings(project: Project, shot: Shot): Shot {
   let next = { ...shot };
@@ -300,16 +304,7 @@ export function ensureShotContinuityBindings(project: Project, shot: Shot): Shot
     else if (project.environments?.[0]?.id) next.environmentId = project.environments[0].id;
   }
 
-  if (!(next.characterIds || []).length) {
-    const prev = previousSameSetShot(project, next);
-    if (prev?.characterIds?.length) {
-      next.characterIds = [...prev.characterIds];
-    } else if ((project.characters || []).length > 0 && (project.characters || []).length <= 4) {
-      // Small cast shows: default everyone on stage unless director cleared cast
-      next.characterIds = (project.characters || []).map((c) => c.id);
-    }
-  }
-
+  // Do NOT touch characterIds — empty means no cast lock on this shot.
   return next;
 }
 

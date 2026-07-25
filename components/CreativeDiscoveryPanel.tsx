@@ -288,23 +288,19 @@ export default function CreativeDiscoveryPanel({
           next = { ...next, defaultEnvironmentId: newEnv.id };
         }
 
-        // Stamp locked cast onto empty shots that have no cast yet (prevents random extras)
-        if (newChars.length) {
+        // Only stamp cast onto the discover shot itself — never auto-fill other shots.
+        // Empty cast on other shots = director wants set-only / chooses cast later.
+        if (newChars.length && discoverShotId) {
           const castIds = newChars.map((c) => c.id);
           next = {
             ...next,
             shots: (next.shots || []).map((s) => {
-              if (isTransitionShot(s)) return s;
-              if (s.id === discoverShotId) {
-                return {
-                  ...s,
-                  characterIds: [...new Set([...(s.characterIds || []), ...castIds])],
-                  environmentId: newEnv?.id || s.environmentId,
-                };
-              }
-              if ((s.characterIds || []).length) return s;
-              if (s.imageUrl || s.videoUrl) return s;
-              return { ...s, characterIds: castIds };
+              if (s.id !== discoverShotId) return s;
+              return {
+                ...s,
+                characterIds: [...new Set([...(s.characterIds || []), ...castIds])],
+                environmentId: newEnv?.id || s.environmentId,
+              };
             }),
           };
         }
