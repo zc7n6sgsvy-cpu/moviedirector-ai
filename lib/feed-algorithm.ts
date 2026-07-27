@@ -107,10 +107,10 @@ export function premiereBoost(publishedAt: Date | string, now = new Date()): num
   if (Number.isNaN(t.getTime())) return 0;
   const ageMs = now.getTime() - t.getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
-  if (ageDays < 0) return 0.15; // clock skew
+  if (ageDays < 0) return 0.06;
   if (ageDays > PREMIERE_DAYS) return 0;
-  // Smooth within opening week: full boost day 0, fades to 0 at day 7
-  return 0.22 * (1 - ageDays / PREMIERE_DAYS);
+  // Spice only — must not outrank proven craft
+  return 0.08 * (1 - ageDays / PREMIERE_DAYS);
 }
 
 export function scoreFeedItem(
@@ -124,25 +124,28 @@ export function scoreFeedItem(
   const premiere = premiereBoost(input.publishedAt, now);
   const salt = dailyRotationSalt(input.id, dayKey);
 
-  // Weights: craft forever dominant; fairness keeps catalog alive; premiere is spice only
+  // Craft forever dominant; fairness keeps catalog alive; premiere is light spice only
   const score =
-    0.42 * craft +
-    0.22 * audience +
-    0.26 * fairness +
-    premiere + // already scaled ~0–0.22
-    0.08 * salt; // daily repertory reshuffle among peers
+    0.5 * craft +
+    0.2 * audience +
+    0.22 * fairness +
+    premiere + // ~0–0.08
+    0.06 * salt;
 
   const reasons: string[] = [];
-  if (premiere > 0.05) reasons.push('Opening week on the marquee');
+  if (premiere > 0.03) reasons.push('Opening week on the marquee');
   if (craft >= 0.55 && (input.ratingCount || 0) >= 3) reasons.push('Strong craft / ratings');
   if (fairness >= 0.55) reasons.push('Second screening — under-seen in the catalog');
   if (audience >= 0.4) reasons.push('Audience heat (likes & discussion)');
   if (!reasons.length) reasons.push('In repertory rotation');
 
   let lane: FeedLane = 'repertory';
-  if (premiere > 0.08) lane = 'premiere';
+  // Proven craft stays repertory even in opening week
+  if (premiere > 0.04 && craft < 0.65) lane = 'premiere';
   else if (fairness >= 0.6 && craft < 0.7) lane = 'second-screening';
-  else if (fairness >= 0.55 && (input.impressionCount || 0) < 20) lane = 'second-screening';
+  else if (fairness >= 0.55 && (input.impressionCount || 0) < 20 && craft < 0.65) {
+    lane = 'second-screening';
+  }
 
   return { score, lane, reasons };
 }
