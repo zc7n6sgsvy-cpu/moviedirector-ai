@@ -9,10 +9,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   await dbConnect();
 
-  // Count a catalog "impression" — powers under-seen fairness (not a decay clock)
+  // Revolving catalog: every open is a watch — year-old films return when people still watch
   const item = await FeedItem.findByIdAndUpdate(
     id,
-    { $inc: { impressionCount: 1 } },
+    {
+      $inc: { impressionCount: 1, watchCount: 1 },
+      $set: { lastWatchedAt: new Date() },
+    },
     { new: true }
   );
   if (!item) return NextResponse.json({ error: 'Film not found' }, { status: 404 });

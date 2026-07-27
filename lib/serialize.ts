@@ -31,6 +31,8 @@ export function serializeFeedItem(item: object) {
     ratingAvg: (record.ratingAvg as number) ?? 0,
     ratingCount: (record.ratingCount as number) ?? 0,
     impressionCount: (record.impressionCount as number) ?? 0,
+    watchCount: (record.watchCount as number) ?? (record.impressionCount as number) ?? 0,
+    lastWatchedAt: formatDate(record.lastWatchedAt as Date | string | undefined),
     previewClip: record.previewClip,
     // Optional Repertoire ranking fields (set by /api/feed)
     feedScore: record.feedScore,

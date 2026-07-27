@@ -3150,14 +3150,17 @@ Alternative: Set up Render worker for one-click server-side render.
         />
       )}
 
-      {/* CHANNELS — Private Subscription Channels */}
+      {/* CHANNELS — Optional Director's Club (not paywall-first identity) */}
       {currentView === 'channels' && (
         <div className="max-w-7xl mx-auto px-8 py-12">
           <div className="flex items-end justify-between mb-8">
             <div>
-              <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">PRODUCTION SERIES</div>
+              <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">OPTIONAL · DIRECTOR&apos;S CLUB</div>
               <div className="text-6xl font-display tracking-[-2.5px]">Your Channels</div>
-              <p className="text-white/60 text-sm mt-2">Serialized sitcoms and films — subscribers get every episode. Beta: subscriptions are free.</p>
+              <p className="text-white/60 text-sm mt-2 max-w-xl">
+                Public feed first — that&apos;s how you feel like a director. Channels are optional deep cuts
+                (full seasons, extras) when you&apos;re ready. Beta: free; payments later.
+              </p>
             </div>
             <button onClick={() => setShowChannelModal(true)} className="btn-gold px-8 py-3 rounded-full flex items-center gap-2">
               <Plus className="w-5 h-5"/> NEW SERIES
@@ -3184,8 +3187,12 @@ Alternative: Set up Render worker for one-click server-side render.
           {channels.length === 0 ? (
             <div className="p-16 text-center border border-white/10 rounded-3xl">
               <Globe className="mx-auto mb-4 opacity-40" />
-              <p className="text-xl">No channels yet. Turn your shows into recurring revenue.</p>
-              <button onClick={() => setShowChannelModal(true)} className="mt-6 btn-outline px-6 py-2 rounded-2xl">Launch your first channel</button>
+              <p className="text-xl">No club yet — and that&apos;s fine.</p>
+              <p className="text-white/50 text-sm mt-2 max-w-md mx-auto">
+                Publish to the public repertory first. Open a Director&apos;s Club only if you want a home for full seasons or extras.
+              </p>
+              <button onClick={() => setShowChannelModal(true)} className="mt-6 btn-outline px-6 py-2 rounded-2xl">Optional: start a series club</button>
+              <button onClick={() => setCurrentView('feed')} className="mt-3 block mx-auto text-sm text-[var(--gold)] hover:underline">See the public feed →</button>
             </div>
           ) : (
             <div className="grid md:grid-cols-2 gap-6">
@@ -3455,12 +3462,13 @@ Alternative: Set up Render worker for one-click server-side render.
               <div className="text-6xl font-display tracking-[-2.5px]">Everyone&apos;s Films</div>
             </div>
             <div className="text-sm text-white/60 max-w-xs text-right">
-              Repertory rotation — films stay in the catalog. No death-by-decay timeline.
+              Revolving repertory — if people still watch it, it can return to the marquee.
             </div>
           </div>
           <p className="text-[11px] text-white/40 mb-8 max-w-2xl leading-relaxed">
-            Ranked by craft (ratings), audience heat, and <em>second screenings</em> for under-seen work.
-            Opening week is a spotlight only — older films do not fade to zero. The shelf reshuffles a little each day so gems resurface.
+            Not a death-timeline. A year-old film that still gets watched can pop up again.
+            Ranked by craft, <em>still playing</em> (recent watches/rewatches), second screenings for under-seen work,
+            and a light premiere spotlight — never a penalty for age.
           </p>
 
           {!currentUser && (
@@ -3538,17 +3546,21 @@ Alternative: Set up Render worker for one-click server-side render.
                           className={`absolute top-2 left-2 text-[9px] uppercase tracking-wider px-2 py-0.5 rounded ${
                             item.feedLane === 'premiere'
                               ? 'bg-[var(--gold)] text-black'
-                              : item.feedLane === 'second-screening'
-                                ? 'bg-[var(--cyan)]/90 text-black'
-                                : 'bg-white/15 text-white/90'
+                              : item.feedLane === 'still-playing'
+                                ? 'bg-emerald-400/90 text-black'
+                                : item.feedLane === 'second-screening'
+                                  ? 'bg-[var(--cyan)]/90 text-black'
+                                  : 'bg-white/15 text-white/90'
                           }`}
                           title={(item.feedReasons || []).join(' · ')}
                         >
                           {item.feedLane === 'premiere'
                             ? 'Premiere'
-                            : item.feedLane === 'second-screening'
-                              ? '2nd screening'
-                              : 'Repertory'}
+                            : item.feedLane === 'still-playing'
+                              ? 'Still playing'
+                              : item.feedLane === 'second-screening'
+                                ? '2nd screening'
+                                : 'Repertory'}
                         </div>
                       )}
                     </div>
@@ -4968,15 +4980,18 @@ curl -X POST /api/generate/batch \\
         {showChannelModal && (
           <div className="fixed inset-0 bg-black/90 z-[110] flex items-center justify-center p-6">
             <motion.div initial={{opacity:0, y:20}} animate={{opacity:1,y:0}} className="bg-[#0a0a0a] border border-white/10 rounded-3xl max-w-md w-full p-8">
-              <div className="font-display text-4xl tracking-tight mb-2">New Private Channel</div>
-              <p className="text-sm text-white/60 mb-8">Your subscribers get serialized episodes. Beta: subscriptions are free while we build payments.</p>
+              <div className="font-display text-4xl tracking-tight mb-2">Director&apos;s Club</div>
+              <p className="text-sm text-white/60 mb-8">
+                Optional series home — not required to be a director. Keep your best work free on the public feed;
+                stash full seasons or extras here when you want. Beta: free while we build payments.
+              </p>
 
-              <input value={newChannel.name} onChange={e => setNewChannel({...newChannel, name: e.target.value})} placeholder="Channel name e.g. The Alex Rivera Sitcom" className="director-input w-full px-5 py-3 text-xl rounded-2xl mb-4" />
-              <input value={newChannel.description} onChange={e => setNewChannel({...newChannel, description: e.target.value})} placeholder="Short description for subscribers" className="director-input w-full px-5 py-3 rounded-2xl mb-8" />
+              <input value={newChannel.name} onChange={e => setNewChannel({...newChannel, name: e.target.value})} placeholder="Series name e.g. Night Shift at the Museum" className="director-input w-full px-5 py-3 text-xl rounded-2xl mb-4" />
+              <input value={newChannel.description} onChange={e => setNewChannel({...newChannel, description: e.target.value})} placeholder="What fans get (full season, director's cuts…)" className="director-input w-full px-5 py-3 rounded-2xl mb-8" />
 
               <div className="flex gap-3">
                 <button onClick={() => setShowChannelModal(false)} className="flex-1 py-3 text-white/70">Cancel</button>
-                <button onClick={createChannel} className="flex-1 btn-gold py-3 rounded-2xl text-black">CREATE CHANNEL</button>
+                <button onClick={createChannel} className="flex-1 btn-gold py-3 rounded-2xl text-black">CREATE CLUB</button>
               </div>
             </motion.div>
           </div>

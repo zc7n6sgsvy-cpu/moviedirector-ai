@@ -10,8 +10,12 @@ export interface IFeedItem extends Document {
   commentCount: number;
   ratingAvg: number;
   ratingCount: number;
-  /** Opens / watches — powers under-seen fairness (anti-decay catalog) */
+  /** Lifetime opens — exposure / fairness */
   impressionCount: number;
+  /** Watches + rewatches — revolving "still playing" */
+  watchCount: number;
+  /** Last open — year-old films return when this is recent */
+  lastWatchedAt?: Date;
   publishedAt: Date;
   previewClip?: string;
 }
@@ -27,14 +31,18 @@ const FeedItemSchema: Schema = new Schema({
   ratingAvg: { type: Number, default: 0 },
   ratingCount: { type: Number, default: 0 },
   impressionCount: { type: Number, default: 0 },
+  watchCount: { type: Number, default: 0 },
+  lastWatchedAt: { type: Date },
   publishedAt: { type: Date, default: Date.now },
   previewClip: String,
 });
 
 FeedItemSchema.index({ publishedAt: -1 });
 FeedItemSchema.index({ projectId: 1 }, { unique: true });
-FeedItemSchema.index({ impressionCount: 1, ratingAvg: -1 });
+FeedItemSchema.index({ lastWatchedAt: -1 });
+FeedItemSchema.index({ watchCount: -1, ratingAvg: -1 });
 
-const FeedItem: Model<IFeedItem> = mongoose.models.FeedItem || mongoose.model<IFeedItem>('FeedItem', FeedItemSchema);
+const FeedItem: Model<IFeedItem> =
+  mongoose.models.FeedItem || mongoose.model<IFeedItem>('FeedItem', FeedItemSchema);
 
 export default FeedItem;

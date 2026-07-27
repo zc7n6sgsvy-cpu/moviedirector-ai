@@ -60,15 +60,27 @@ export async function GET(req: NextRequest) {
 
   const inputs: (FeedRankInput & Record<string, unknown>)[] = raw.map((doc) => {
     const id = (doc as { _id: { toString: () => string } })._id.toString();
+    const d = doc as {
+      publishedAt?: Date;
+      likeCount?: number;
+      commentCount?: number;
+      ratingAvg?: number;
+      ratingCount?: number;
+      impressionCount?: number;
+      watchCount?: number;
+      lastWatchedAt?: Date;
+    };
     return {
       ...doc,
       id,
-      publishedAt: (doc as { publishedAt?: Date }).publishedAt || new Date(0),
-      likeCount: (doc as { likeCount?: number }).likeCount || 0,
-      commentCount: (doc as { commentCount?: number }).commentCount || 0,
-      ratingAvg: (doc as { ratingAvg?: number }).ratingAvg || 0,
-      ratingCount: (doc as { ratingCount?: number }).ratingCount || 0,
-      impressionCount: (doc as { impressionCount?: number }).impressionCount || 0,
+      publishedAt: d.publishedAt || new Date(0),
+      likeCount: d.likeCount || 0,
+      commentCount: d.commentCount || 0,
+      ratingAvg: d.ratingAvg || 0,
+      ratingCount: d.ratingCount || 0,
+      impressionCount: d.impressionCount || 0,
+      watchCount: d.watchCount || d.impressionCount || 0,
+      lastWatchedAt: d.lastWatchedAt || null,
     };
   });
 
