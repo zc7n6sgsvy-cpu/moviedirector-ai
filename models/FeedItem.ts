@@ -10,6 +10,8 @@ export interface IFeedItem extends Document {
   commentCount: number;
   ratingAvg: number;
   ratingCount: number;
+  /** Opens / watches — powers under-seen fairness (anti-decay catalog) */
+  impressionCount: number;
   publishedAt: Date;
   previewClip?: string;
 }
@@ -24,12 +26,14 @@ const FeedItemSchema: Schema = new Schema({
   commentCount: { type: Number, default: 0 },
   ratingAvg: { type: Number, default: 0 },
   ratingCount: { type: Number, default: 0 },
+  impressionCount: { type: Number, default: 0 },
   publishedAt: { type: Date, default: Date.now },
   previewClip: String,
 });
 
 FeedItemSchema.index({ publishedAt: -1 });
 FeedItemSchema.index({ projectId: 1 }, { unique: true });
+FeedItemSchema.index({ impressionCount: 1, ratingAvg: -1 });
 
 const FeedItem: Model<IFeedItem> = mongoose.models.FeedItem || mongoose.model<IFeedItem>('FeedItem', FeedItemSchema);
 

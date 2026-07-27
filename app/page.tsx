@@ -132,7 +132,17 @@ async function loadSubscriptions(authToken: string) {
 
 async function loadFeed(cursor?: string) {
   try {
-    const url = cursor ? `/api/feed?cursor=${encodeURIComponent(cursor)}` : '/api/feed';
+    // Repertoire catalog uses offset; legacy cursor may be "offset:N" or a date
+    let url = '/api/feed?limit=24';
+    if (cursor) {
+      if (cursor.startsWith('offset:')) {
+        url += `&offset=${encodeURIComponent(cursor.slice(7))}`;
+      } else if (/^\d+$/.test(cursor)) {
+        url += `&offset=${encodeURIComponent(cursor)}`;
+      } else {
+        url += `&cursor=${encodeURIComponent(cursor)}`;
+      }
+    }
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
@@ -148,8 +158,11 @@ async function loadFeed(cursor?: string) {
           ...item,
           creator: item.creator || item.creatorUsername,
         })),
-        nextCursor: data.nextCursor,
+        nextCursor:
+          data.nextCursor ||
+          (data.nextOffset != null ? `offset:${data.nextOffset}` : null),
         hasMore: data.hasMore,
+        algorithm: data.algorithm,
       };
     }
   } catch (e) {}
@@ -3433,16 +3446,22 @@ Alternative: Set up Render worker for one-click server-side render.
         </div>
       )}
 
-      {/* MAIN FEED — Public discovery for everyone's films (social media core) */}
+      {/* MAIN FEED — Repertory catalog (anti-decay), not a death-by-timeline social feed */}
       {currentView === 'feed' && (
         <div className="max-w-6xl mx-auto px-8 py-12">
-          <div className="flex items-end justify-between mb-8">
+          <div className="flex flex-wrap items-end justify-between gap-4 mb-4">
             <div>
               <div className="uppercase tracking-[4px] text-xs text-[var(--gold)] mb-1">THE SOCIAL FEED</div>
-              <div className="text-6xl font-display tracking-[-2.5px]">Everyone's Films</div>
+              <div className="text-6xl font-display tracking-[-2.5px]">Everyone&apos;s Films</div>
             </div>
-            <div className="text-sm text-white/60">Films as posts. Episodes as content.</div>
+            <div className="text-sm text-white/60 max-w-xs text-right">
+              Repertory rotation — films stay in the catalog. No death-by-decay timeline.
+            </div>
           </div>
+          <p className="text-[11px] text-white/40 mb-8 max-w-2xl leading-relaxed">
+            Ranked by craft (ratings), audience heat, and <em>second screenings</em> for under-seen work.
+            Opening week is a spotlight only — older films do not fade to zero. The shelf reshuffles a little each day so gems resurface.
+          </p>
 
           {!currentUser && (
             <div className="mb-6 p-6 bg-[#111] rounded-2xl text-center border border-[var(--gold)]/20">
@@ -3514,6 +3533,24 @@ Alternative: Set up Render worker for one-click server-side render.
                           VIDEO
                         </div>
                       )}
+                      {item.feedLane && (
+                        <div
+                          className={`absolute top-2 left-2 text-[9px] uppercase tracking-wider px-2 py-0.5 rounded ${
+                            item.feedLane === 'premiere'
+                              ? 'bg-[var(--gold)] text-black'
+                              : item.feedLane === 'second-screening'
+                                ? 'bg-[var(--cyan)]/90 text-black'
+                                : 'bg-white/15 text-white/90'
+                          }`}
+                          title={(item.feedReasons || []).join(' · ')}
+                        >
+                          {item.feedLane === 'premiere'
+                            ? 'Premiere'
+                            : item.feedLane === 'second-screening'
+                              ? '2nd screening'
+                              : 'Repertory'}
+                        </div>
+                      )}
                     </div>
                     <div className="p-5 flex flex-col flex-1">
                       <div className="text-xs text-white/50 mb-1">
@@ -3572,7 +3609,10 @@ Alternative: Set up Render worker for one-click server-side render.
             </div>
           )}
 
-          <div className="mt-12 text-xs text-white/50 text-center">This is the social heart: your finished films become content others discover, watch, and share — driving them to your channels.</div>
+          <div className="mt-12 text-xs text-white/50 text-center max-w-lg mx-auto leading-relaxed">
+            Social heart of the studio: publish once, stay in the repertory. Great work keeps circulating —
+            it does not expire because the algorithm got bored.
+          </div>
         </div>
       )}
 

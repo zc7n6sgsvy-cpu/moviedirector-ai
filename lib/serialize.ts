@@ -30,6 +30,11 @@ export function serializeFeedItem(item: object) {
     commentCount: (record.commentCount as number) ?? 0,
     ratingAvg: (record.ratingAvg as number) ?? 0,
     ratingCount: (record.ratingCount as number) ?? 0,
+    impressionCount: (record.impressionCount as number) ?? 0,
     previewClip: record.previewClip,
+    // Optional Repertoire ranking fields (set by /api/feed)
+    feedScore: record.feedScore,
+    feedLane: record.feedLane,
+    feedReasons: record.feedReasons,
   };
 }

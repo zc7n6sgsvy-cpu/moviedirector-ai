@@ -9,7 +9,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   await dbConnect();
 
-  const item = await FeedItem.findById(id);
+  // Count a catalog "impression" — powers under-seen fairness (not a decay clock)
+  const item = await FeedItem.findByIdAndUpdate(
+    id,
+    { $inc: { impressionCount: 1 } },
+    { new: true }
+  );
   if (!item) return NextResponse.json({ error: 'Film not found' }, { status: 404 });
 
   const project = await Project.findById(item.projectId).select('title type shots characters');
