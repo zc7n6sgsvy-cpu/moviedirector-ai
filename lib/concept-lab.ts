@@ -11,6 +11,7 @@ export type LabStationId =
   | 'auto'
   | 'world'
   | 'script'
+  | 'narrative'
   | 'prompts'
   | 'cast-direction'
   | 'continuity'
@@ -59,6 +60,13 @@ export const LAB_STATIONS: {
     label: 'Script Control',
     short: 'Script',
     purpose: 'Master script / teleplay. Dialogue and scene order that drive shots.',
+  },
+  {
+    id: 'narrative',
+    label: 'Narrative Engine',
+    short: 'Story',
+    purpose:
+      'Showrunner + plot-twist specialist: elevate hooks, cliffhangers, stakes, and earned twists by genre.',
   },
   {
     id: 'prompts',

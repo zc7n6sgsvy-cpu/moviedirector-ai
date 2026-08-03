@@ -11,24 +11,31 @@ import {
   emptyContinuity,
   type LabStationId,
 } from '@/lib/concept-lab';
+import NarrativeEnginePanel from '@/components/NarrativeEnginePanel';
 
 type Props = {
   project: Project;
+  token?: string | null;
   onUpdate: (updater: (p: Project) => Project) => void;
   onGoStoryboard: () => void;
   onGoEnsemble: () => void;
   onGoClips: () => void;
   /** One-click: treatment + shot list from title/logline (minimal mode) */
   onRunAutoBuild: () => void;
+  onCreditBalance?: (n: number) => void;
+  onAuthRequired?: () => void;
 };
 
 export default function ConceptLaboratory({
   project,
+  token,
   onUpdate,
   onGoStoryboard,
   onGoEnsemble,
   onGoClips,
   onRunAutoBuild,
+  onCreditBalance,
+  onAuthRequired,
 }: Props) {
   const mode = project.generationSettings?.workflowMode || 'lab';
   const [station, setStation] = useState<LabStationId>(mode === 'auto' ? 'auto' : 'world');
@@ -331,6 +338,17 @@ export default function ConceptLaboratory({
       )}
 
       {/* SCRIPT */}
+      {station === 'narrative' && (
+        <NarrativeEnginePanel
+          project={project}
+          token={token ?? null}
+          onUpdate={onUpdate}
+          onCreditBalance={onCreditBalance}
+          onAuthRequired={onAuthRequired}
+          onGoStoryboard={onGoStoryboard}
+        />
+      )}
+
       {station === 'script' && (
         <div className="space-y-4">
           <div className="p-4 rounded-2xl border border-white/10 bg-black/40 text-xs text-white/55">

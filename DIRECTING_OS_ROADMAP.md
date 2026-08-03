@@ -9,6 +9,14 @@
 5. **Location library** fields — layout + style notes for procedural set reuse
 6. **Calibration Engine** — free structural sequence scan + timeline flags + fix brief
 7. **Next-shot continuity** — prior frame + cast/set plates in scene refs
+8. **Narrative Engine** — showrunner modes, genre grammar, emotional targets, accept → script/shots
+
+## Narrative Engine ↔ roadmap (connections, not built yet)
+
+- **Platform assemble + review:** Accepted narrative versions become the emotional spine of the review cut; cliffhanger shots can be marked as “must land” in review checklist.
+- **Calibration vision pass:** After narrative upgrade + pixel gen, vision calibration can verify twist/setup crumbs still read on screen (e.g. prop planted in beat 2 visible in frame).
+- **Story insert UX:** Expand-scene + Narrative mid-hooks/`newShots` share the same insert-after-shot path; UI can unify “insert beat” chips later.
+- **Duration controls:** Ending/cliffhanger and mid-hook modes can suggest longer holds on twist pays — duration slider would honor those suggestions.
 
 ## Next concrete steps (priority order)
 

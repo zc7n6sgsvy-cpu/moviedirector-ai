@@ -25,6 +25,7 @@ import BridgeScannerPanel from '@/components/BridgeScannerPanel';
 import CreativeDiscoveryPanel from '@/components/CreativeDiscoveryPanel';
 import CalibrationPanel from '@/components/CalibrationPanel';
 import DirectorsMarkPanel from '@/components/DirectorsMarkPanel';
+import NarrativeEnginePanel from '@/components/NarrativeEnginePanel';
 import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
 import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
@@ -3848,11 +3849,14 @@ Alternative: Set up Render worker for one-click server-side render.
               <div>
                 <ConceptLaboratory
                   project={selectedProject}
+                  token={token}
                   onUpdate={updateProject}
                   onGoStoryboard={() => setActiveTab('storyboard')}
                   onGoEnsemble={() => setActiveTab('cast')}
                   onGoClips={() => setActiveTab('clips')}
                   onRunAutoBuild={runAutoBuild}
+                  onCreditBalance={(n) => setCreditBalance(n)}
+                  onAuthRequired={() => setShowAuthModal(true)}
                 />
 
                 <div className="max-w-5xl mt-10 pt-8 border-t border-white/10 space-y-6">
@@ -4002,6 +4006,15 @@ Alternative: Set up Render worker for one-click server-side render.
                     onCreditBalance={(n) => setCreditBalance(n)}
                     onAuthRequired={() => setShowAuthModal(true)}
                     onGenerateFrame={(id) => generateFrame(id)}
+                  />
+                  <NarrativeEnginePanel
+                    project={selectedProject}
+                    token={token}
+                    onUpdate={updateProject}
+                    onCreditBalance={(n) => setCreditBalance(n)}
+                    onAuthRequired={() => setShowAuthModal(true)}
+                    compact
+                    onGoStoryboard={() => setActiveTab('storyboard')}
                   />
                   <div className="grid lg:grid-cols-2 gap-4 my-4">
                     <DirectorsMarkPanel project={selectedProject} onUpdate={updateProject} />
