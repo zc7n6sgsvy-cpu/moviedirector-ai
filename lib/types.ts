@@ -67,6 +67,10 @@ export interface Shot {
     status?: 'planned' | 'replaced';
     note?: string;
   };
+  /** Calibration flags attached after a sequence scan */
+  calibrationIssueIds?: string[];
+  /** Optional fix candidates generated for a flagged range */
+  calibrationFixUrls?: string[];
 }
 
 /**
@@ -93,6 +97,10 @@ export interface GenerationSettings {
   aspectRatio?: string;
   /** Director notes always present in gen prompts */
   directorNotes?: string;
+  /** Default video resolution for 1.5 model */
+  videoResolution?: '480p' | '720p' | '1080p';
+  /** Prefer multi-ref character/set lock on video when no still */
+  preferMultiRefVideo?: boolean;
 }
 
 export interface Character {
@@ -136,8 +144,20 @@ export interface Character {
   voiceAxes?: VoiceAxes;
   voiceVariants?: VoiceVariant[];
   activeVoiceId?: string;
-  /** Preferred xAI TTS voice id when generating spoken lines */
+  /** Preferred xAI TTS / video reference voice id (ara, eve, leo, rex, sal…) */
   ttsVoiceId?: string;
+  /**
+   * Optional URL of a short voice sample the director uploaded for craft notes.
+   * Note: xAI video API accepts preset voice_ids only (not custom clips) in public API.
+   */
+  voiceSampleUrl?: string;
+  /** Multi-angle / multi-shot visual plates (in addition to referenceImageUrl) */
+  visualReferenceUrls?: string[];
+  /**
+   * Voice Profile — personality, tone, reaction style, speech patterns.
+   * Injected into video prompts; pairs with ttsVoiceId for face+voice lock.
+   */
+  voiceProfile?: VoiceProfile;
   tags?: string[];
   /**
    * Consistency lock — when set, prompts forbid redesigning this character.
@@ -154,6 +174,17 @@ export interface Character {
   packId?: string;
 }
 
+/** How a character sounds and reacts (packable with visual refs) */
+export interface VoiceProfile {
+  /** Maps to xAI preset voice when generating video/TTS */
+  presetVoiceId?: string;
+  tone?: string;
+  reactionStyle?: string;
+  speechPatterns?: string;
+  energy?: string;
+  notes?: string;
+}
+
 /** Locked location for series continuity (home, office, cafe…) */
 export interface EnvironmentLocation {
   id: string;
@@ -164,6 +195,14 @@ export interface EnvironmentLocation {
   architecture?: string;
   signatureProps?: string;
   referenceImageUrl?: string;
+  /** Extra stills of the same place (angles, time of day) */
+  visualReferenceUrls?: string[];
+  /** Floor plan / geography notes for procedural reuse */
+  layoutNotes?: string;
+  /** Style laws for this place only */
+  styleNotes?: string;
+  /** Town / district / building hierarchy */
+  parentLocationId?: string;
   consistencyLock?: {
     modelSheet: string;
     doNotChange: string;
@@ -173,6 +212,9 @@ export interface EnvironmentLocation {
   };
   packId?: string;
 }
+
+/** Alias — Location Library uses the same shape as EnvironmentLocation */
+export type LocationProfile = EnvironmentLocation;
 
 export interface WorldBible {
   setting?: string;
@@ -244,10 +286,19 @@ export interface Project {
   };
   /** Active ad format id from Marketing Studio */
   adFormatId?: string;
-  /** Locked environments for this project / series */
+  /** Locked environments / Location Library for this project / series */
   environments?: EnvironmentLocation[];
   /** Default environment id for new shots */
   defaultEnvironmentId?: string;
+  /** Whether Director's Mark title beat was inserted */
+  directorsMarkInserted?: boolean;
+  /** Last calibration report JSON */
+  calibrationReport?: {
+    scannedAt: string;
+    issueCount: number;
+    summary: string;
+    issues: Array<Record<string, unknown>>;
+  };
   isFirstCut?: boolean;
   firstCutPath?: string;
   createdAt: string;

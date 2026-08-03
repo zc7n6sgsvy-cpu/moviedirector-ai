@@ -23,6 +23,8 @@ import CharacterConsistencyStudio from '@/components/CharacterConsistencyStudio'
 import EnvironmentStudio from '@/components/EnvironmentStudio';
 import BridgeScannerPanel from '@/components/BridgeScannerPanel';
 import CreativeDiscoveryPanel from '@/components/CreativeDiscoveryPanel';
+import CalibrationPanel from '@/components/CalibrationPanel';
+import DirectorsMarkPanel from '@/components/DirectorsMarkPanel';
 import { PRODUCT_TOUR_STEPS } from '@/lib/product-tour';
 import { isValidObjectId } from '@/lib/ids';
 import type { ProjectType, Shot, Character, StyleTemplate, Channel, Project } from '@/lib/types';
@@ -50,6 +52,7 @@ import {
   ensureShotContinuityBindings,
   promoteFrameToEnvPlate,
 } from '@/lib/continuity-refs';
+import { resolveVideoModeAndPayload } from '@/lib/scene-refs';
 import {
   insertTransitionAfter,
   isTransitionShot,
@@ -730,6 +733,8 @@ export default function MovieDirector() {
           adFormatId: project.adFormatId,
           environments: project.environments,
           defaultEnvironmentId: project.defaultEnvironmentId,
+          directorsMarkInserted: project.directorsMarkInserted,
+          calibrationReport: project.calibrationReport,
         }),
       });
       if (!res.ok) {
@@ -1523,11 +1528,15 @@ export default function MovieDirector() {
       updateShot(shotId, { environmentId: shotForVideo.environmentId });
     }
 
-    const continuityVid = isTransitionShot(shot)
-      ? { urls: [] as string[] }
-      : collectContinuityRefs(selectedProject, shotForVideo);
+    // Grok Imagine Video 1.5: multi-ref cast/set + preset voices when possible
+    const scenePayload = isTransitionShot(shot)
+      ? null
+      : resolveVideoModeAndPayload(selectedProject, shotForVideo);
 
-    const prompt = generateVideoPrompt(shotForVideo);
+    const baseVideoPrompt = generateVideoPrompt(shotForVideo);
+    const prompt = scenePayload?.promptSuffix
+      ? `${baseVideoPrompt} ${scenePayload.promptSuffix}`
+      : baseVideoPrompt;
     navigator.clipboard.writeText(prompt).catch(() => {});
 
     if (!token) {
@@ -1546,10 +1555,14 @@ export default function MovieDirector() {
 
     const referenceImageUrls = isTransitionShot(shot)
       ? bridgeReferenceImages(selectedProject, shot, fromShot, toShot)
-      : continuityVid.urls;
+      : scenePayload?.referenceImageUrls || [];
+
+    const referenceVoiceIds = isTransitionShot(shot)
+      ? []
+      : scenePayload?.referenceVoiceIds || [];
 
     // Bridges: prefer image-to-video from previous frame — never text-to-video cold start
-    // Story shots: prefer i2v from this shot's frame (already continuity-locked still)
+    // Story: i2v from still when present; else multi-ref 1.5 with cast/set plates
     const mode = isTransitionShot(shot)
       ? seedImage
         ? 'image-to-video'
@@ -1558,11 +1571,12 @@ export default function MovieDirector() {
           : 'text-to-video'
       : prevShot?.videoUrl && !shot.imageUrl
         ? 'extend-video'
-        : shot.imageUrl
-          ? 'image-to-video'
-          : referenceImageUrls.length
-            ? 'reference-to-video'
-            : 'text-to-video';
+        : scenePayload?.mode ||
+          (shot.imageUrl
+            ? 'image-to-video'
+            : referenceImageUrls.length
+              ? 'reference-to-video'
+              : 'text-to-video');
 
     if (isTransitionShot(shot) && mode === 'text-to-video') {
       toast.error('Bridge needs a seed frame', {
@@ -1572,6 +1586,12 @@ export default function MovieDirector() {
     }
 
     const cost = videoCreditCost(shot);
+    const refNote =
+      !isTransitionShot(shot) && (referenceImageUrls.length || referenceVoiceIds.length)
+        ? ` Video 1.5 locks: ${referenceImageUrls.length} image ref(s)${
+            referenceVoiceIds.length ? `, ${referenceVoiceIds.length} voice(s)` : ''
+          }.`
+        : ' Video 1.5.';
     if (
       !confirmSpend(
         'video',
@@ -1579,10 +1599,10 @@ export default function MovieDirector() {
         isTransitionShot(shot)
           ? 'Continuity bridge: cast-locked, seeded from previous frame. No new characters.'
           : shot.videoUrl
-            ? 'Retake: half price. Draft clips are shorter (max 5s) to save budget.'
+            ? `Retake: half price. Draft clips are shorter (max 5s) to save budget.${refNote}`
             : genQuality === 'draft'
-              ? 'Draft clip (max 5s). Final when the motion is locked.'
-              : `Final ${shot.duration || 8}s clip.`
+              ? `Draft clip (max 5s). Final when the motion is locked.${refNote}`
+              : `Final ${shot.duration || 8}s clip.${refNote}`
       )
     ) {
       return;
@@ -1591,7 +1611,7 @@ export default function MovieDirector() {
     toast.loading(
       isTransitionShot(shot)
         ? `Generating continuity bridge (−${cost} cr)…`
-        : `Generating ${genQuality} clip (−${cost} cr)…`,
+        : `Generating ${genQuality} clip on Video 1.5 (−${cost} cr)…`,
       { id: `gen-vid-${shotId}` }
     );
     try {
@@ -1600,14 +1620,27 @@ export default function MovieDirector() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           prompt,
-          imageUrl: seedImage || shot.imageUrl,
-          videoUrl: isTransitionShot(shot) ? undefined : prevShot?.videoUrl,
-          referenceImageUrls,
+          imageUrl:
+            mode === 'image-to-video' || mode === 'extend-video'
+              ? seedImage || shot.imageUrl
+              : undefined,
+          videoUrl:
+            mode === 'extend-video' && !isTransitionShot(shot) ? prevShot?.videoUrl : undefined,
+          referenceImageUrls:
+            mode === 'reference-to-video' && referenceImageUrls.length
+              ? referenceImageUrls
+              : undefined,
+          referenceVoiceIds:
+            mode === 'reference-to-video' && referenceVoiceIds.length
+              ? referenceVoiceIds
+              : undefined,
           duration: isTransitionShot(shot) ? Math.min(shot.duration || 4, 5) : shot.duration,
           mode,
           projectId: selectedProject.id,
           shotId,
           quality: genQuality,
+          resolution: selectedProject.generationSettings?.videoResolution || '720p',
+          aspectRatio: selectedProject.generationSettings?.aspectRatio || '16:9',
         }),
       });
       const data = await res.json();
@@ -3970,6 +4003,20 @@ Alternative: Set up Render worker for one-click server-side render.
                     onAuthRequired={() => setShowAuthModal(true)}
                     onGenerateFrame={(id) => generateFrame(id)}
                   />
+                  <div className="grid lg:grid-cols-2 gap-4 my-4">
+                    <DirectorsMarkPanel project={selectedProject} onUpdate={updateProject} />
+                    <CalibrationPanel
+                      project={selectedProject}
+                      token={token}
+                      onUpdate={updateProject}
+                      onAuthRequired={() => setShowAuthModal(true)}
+                      onGenerateFrame={(id) => generateFrame(id)}
+                      onJumpToShot={(id) => {
+                        const el = document.getElementById(`shot-card-${id}`);
+                        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }}
+                    />
+                  </div>
                   <BridgeScannerPanel
                     project={selectedProject}
                     token={token}
@@ -3983,7 +4030,7 @@ Alternative: Set up Render worker for one-click server-side render.
                 <div className="storyboard-grid">
                   <AnimatePresence>
                     {selectedProject.shots.map((shot) => (
-                      <div key={shot.id} className={`shot-card rounded-2xl overflow-hidden flex flex-col ${shot.imageUrl ? 'has-image' : ''}`}>
+                      <div id={`shot-card-${shot.id}`} key={shot.id} className={`shot-card rounded-2xl overflow-hidden flex flex-col ${shot.imageUrl ? 'has-image' : ''}`}>
                         <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden">
                           {shot.imageUrl ? (
                             <img src={shot.imageUrl} alt={shot.description} className="w-full h-full object-cover" />

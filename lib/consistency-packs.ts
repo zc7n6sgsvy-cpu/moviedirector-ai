@@ -26,13 +26,14 @@ export interface ConsistencyLock {
 export interface CharacterPack {
   id: string;
   kind: 'character';
-  version: 1;
+  /** v2 adds voice profile + multi visual refs */
+  version: 1 | 2;
   name: string;
   role?: string;
   medium?: string;
   description: string;
   lock: ConsistencyLock;
-  /** Full character fields for re-injection */
+  /** Full character fields for re-injection (visual + voice + personality) */
   character: Partial<Character>;
   createdAt: string;
   tags?: string[];
@@ -113,10 +114,15 @@ export function characterToPack(c: Character): CharacterPack {
     ...(c.consistencyLock?.referenceUrls || []),
   ].filter((u, i, a) => u && a.indexOf(u) === i);
 
+  const visualAll = [
+    ...refs,
+    ...(c.visualReferenceUrls || []),
+  ].filter((u, i, a) => u && a.indexOf(u) === i);
+
   return {
     id: `cp-${c.id || uid()}`,
     kind: 'character',
-    version: 1,
+    version: 2,
     name: c.name || 'Unnamed',
     role: c.role,
     medium: c.medium,
@@ -128,12 +134,21 @@ export function characterToPack(c: Character): CharacterPack {
         (c.faceNotes || c.wardrobe
           ? `Never alter: ${[c.faceNotes, c.wardrobe, c.silhouette, c.signatureProp, c.subjectHint && `position ${c.subjectHint}`].filter(Boolean).join('; ')}. Never swap for another cast member.`
           : 'Never alter face, hair, body type, or signature wardrobe. Never swap identity.'),
-      referenceUrls: refs,
+      referenceUrls: visualAll,
       locked: true,
       lockedAt: c.consistencyLock?.lockedAt || new Date().toISOString(),
     },
-    // Full character blob for perfect re-inject (subjectHint, visibility, memory, voice…)
-    character: { ...c },
+    // Full character blob for perfect re-inject (visuals, voice profile, sample, personality…)
+    character: {
+      ...c,
+      visualReferenceUrls: visualAll,
+      voiceProfile: c.voiceProfile || {
+        presetVoiceId: c.ttsVoiceId,
+        tone: c.personality,
+      },
+      ttsVoiceId: c.ttsVoiceId || c.voiceProfile?.presetVoiceId,
+      voiceSampleUrl: c.voiceSampleUrl,
+    },
     createdAt: new Date().toISOString(),
     tags: c.tags,
   };
@@ -173,6 +188,9 @@ export function packToCharacter(pack: CharacterPack, newId?: string): Character 
     memoryFacts: base.memoryFacts,
     subjectHint: base.subjectHint,
     visibility: base.visibility,
+    visualReferenceUrls: base.visualReferenceUrls || pack.lock.referenceUrls,
+    voiceProfile: base.voiceProfile,
+    voiceSampleUrl: base.voiceSampleUrl,
     referenceImageUrl: primaryRef,
     consistencyLock: {
       ...pack.lock,
@@ -200,6 +218,9 @@ export function createEnvironmentPack(input: {
   architecture?: string;
   signatureProps?: string;
   referenceImageUrl?: string;
+  visualReferenceUrls?: string[];
+  layoutNotes?: string;
+  styleNotes?: string;
   doNotChange?: string;
 }): EnvironmentPack {
   const modelSheet = [
@@ -209,9 +230,16 @@ export function createEnvironmentPack(input: {
     input.architecture && `architecture:${input.architecture}`,
     input.lighting && `lighting:${input.lighting}`,
     input.signatureProps && `props:${input.signatureProps}`,
+    input.layoutNotes && `layout:${input.layoutNotes}`,
+    input.styleNotes && `style:${input.styleNotes}`,
   ]
     .filter(Boolean)
     .join(' — ');
+
+  const refs = [
+    input.referenceImageUrl || '',
+    ...(input.visualReferenceUrls || []),
+  ].filter((u, i, a) => u && a.indexOf(u) === i);
 
   return {
     id: `ep-${uid()}`,
@@ -227,8 +255,8 @@ export function createEnvironmentPack(input: {
       modelSheet,
       doNotChange:
         input.doNotChange ||
-        'Never redesign architecture, wall color, furniture layout, or signature props. Same place every time.',
-      referenceUrls: input.referenceImageUrl ? [input.referenceImageUrl] : [],
+        'Never redesign architecture, wall color, furniture layout, or signature props. Same place every time. Procedural reuse: keep geography coherent across shots.',
+      referenceUrls: refs,
       locked: true,
       lockedAt: new Date().toISOString(),
     },
@@ -253,14 +281,18 @@ export function environmentConsistencyBlock(env: {
   name: string;
   placeType?: string;
   description?: string;
+  layoutNotes?: string;
+  styleNotes?: string;
   consistencyLock?: ConsistencyLock;
   lock?: ConsistencyLock;
 }): string {
   if (!env) return '';
   const lock = env.consistencyLock || env.lock;
   return (
-    `LOCKED ENVIRONMENT "${env.name}" (${env.placeType || 'set'}): ${lock?.modelSheet || env.description || ''}. ` +
-    `${lock?.doNotChange || ''} Same set every shot — series continuity. Do not redesign architecture or furniture layout.`
+    `LOCKED LOCATION "${env.name}" (${env.placeType || 'set'}): ${lock?.modelSheet || env.description || ''}. ` +
+    `${env.layoutNotes ? `Layout: ${env.layoutNotes}. ` : ''}` +
+    `${env.styleNotes ? `Style: ${env.styleNotes}. ` : ''}` +
+    `${lock?.doNotChange || ''} Same place every shot — series continuity / procedural reuse. Do not redesign architecture or furniture layout.`
   );
 }
 

@@ -40,6 +40,8 @@ export default function EnvironmentStudio({
     description: '',
     lighting: '',
     props: '',
+    layoutNotes: '',
+    styleNotes: '',
   });
 
   useEffect(() => {
@@ -59,6 +61,8 @@ export default function EnvironmentStudio({
       description: envForm.description.trim(),
       lighting: envForm.lighting,
       signatureProps: envForm.props,
+      layoutNotes: envForm.layoutNotes,
+      styleNotes: envForm.styleNotes,
     });
     const loc: EnvironmentLocation = {
       id: pack.id,
@@ -68,6 +72,8 @@ export default function EnvironmentStudio({
       lighting: pack.lighting,
       architecture: pack.architecture,
       signatureProps: pack.signatureProps,
+      layoutNotes: envForm.layoutNotes || undefined,
+      styleNotes: envForm.styleNotes || undefined,
       referenceImageUrl: pack.lock.referenceUrls[0],
       consistencyLock: pack.lock,
       packId: pack.id,
@@ -84,11 +90,19 @@ export default function EnvironmentStudio({
     const next = [pack, ...envPacks];
     setEnvPacks(next);
     saveEnvironmentPacks(next);
-    setEnvForm({ name: '', placeType: 'office', description: '', lighting: '', props: '' });
-    toast.success(`Locked set: ${loc.name}`, {
+    setEnvForm({
+      name: '',
+      placeType: 'office',
+      description: '',
+      lighting: '',
+      props: '',
+      layoutNotes: '',
+      styleNotes: '',
+    });
+    toast.success(`Locked location: ${loc.name}`, {
       description: existingPlateHint(loc)
         ? 'Plate attached. Generate frames — they image-edit from this set.'
-        : 'Set saved. Generate a frame or “Gen set ref”, then later shots will hold this room.',
+        : 'Location saved in the library. Gen a set ref, then reuse across the episode.',
     });
   }
 
@@ -203,11 +217,13 @@ export default function EnvironmentStudio({
       {panel === 'sets' && (
         <div className="space-y-6">
           <div className="director-card p-5 rounded-3xl space-y-3">
-            <div className="text-[10px] tracking-widest uppercase text-white/40">New locked set</div>
+            <div className="text-[10px] tracking-widest uppercase text-white/40">
+              Location library · new place
+            </div>
             <div className="grid sm:grid-cols-2 gap-3">
               <input
                 className="lab-input"
-                placeholder="Name (e.g. War Room)"
+                placeholder="Name (e.g. War Room / Main St)"
                 value={envForm.name}
                 onChange={(e) => setEnvForm({ ...envForm, name: e.target.value })}
               />
@@ -216,7 +232,7 @@ export default function EnvironmentStudio({
                 value={envForm.placeType}
                 onChange={(e) => setEnvForm({ ...envForm, placeType: e.target.value })}
               >
-                {['home', 'office', 'cafe', 'exterior', 'lab', 'rooftop', 'other'].map((t) => (
+                {['home', 'office', 'cafe', 'exterior', 'lab', 'rooftop', 'town', 'building', 'other'].map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
@@ -240,9 +256,21 @@ export default function EnvironmentStudio({
                 value={envForm.props}
                 onChange={(e) => setEnvForm({ ...envForm, props: e.target.value })}
               />
+              <input
+                className="lab-input sm:col-span-2"
+                placeholder="Layout notes — floor plan, exits, geography for procedural reuse"
+                value={envForm.layoutNotes}
+                onChange={(e) => setEnvForm({ ...envForm, layoutNotes: e.target.value })}
+              />
+              <input
+                className="lab-input sm:col-span-2"
+                placeholder="Style notes — keep this place coherent across shots"
+                value={envForm.styleNotes}
+                onChange={(e) => setEnvForm({ ...envForm, styleNotes: e.target.value })}
+              />
             </div>
             <button type="button" onClick={addEnvironment} className="btn-gold text-black text-sm px-5 py-2 rounded-xl">
-              Lock environment
+              Lock location
             </button>
           </div>
 

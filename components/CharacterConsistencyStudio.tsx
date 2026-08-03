@@ -241,6 +241,61 @@ export default function CharacterConsistencyStudio({
                       Still on a group still — capture a solo plate so reinsert keeps this identity.
                     </p>
                   )}
+                  <div className="mt-2 grid sm:grid-cols-2 gap-2">
+                    <select
+                      className="lab-input text-xs bg-black"
+                      value={c.ttsVoiceId || c.voiceProfile?.presetVoiceId || ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        onUpdate((p) => ({
+                          ...p,
+                          characters: (p.characters || []).map((x) =>
+                            x.id === c.id
+                              ? {
+                                  ...x,
+                                  ttsVoiceId: v || undefined,
+                                  voiceProfile: {
+                                    ...(x.voiceProfile || {}),
+                                    presetVoiceId: v || undefined,
+                                  },
+                                }
+                              : x
+                          ),
+                        }));
+                      }}
+                    >
+                      <option value="">Voice preset…</option>
+                      {['ara', 'eve', 'leo', 'rex', 'sal'].map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="lab-input text-xs"
+                      placeholder="Tone / speech patterns"
+                      value={c.voiceProfile?.tone || c.voiceProfile?.speechPatterns || ''}
+                      onChange={(e) => {
+                        const tone = e.target.value;
+                        onUpdate((p) => ({
+                          ...p,
+                          characters: (p.characters || []).map((x) =>
+                            x.id === c.id
+                              ? {
+                                  ...x,
+                                  voiceProfile: {
+                                    ...(x.voiceProfile || {}),
+                                    tone,
+                                    speechPatterns: tone,
+                                    presetVoiceId: x.ttsVoiceId || x.voiceProfile?.presetVoiceId,
+                                  },
+                                }
+                              : x
+                          ),
+                        }));
+                      }}
+                    />
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2">
                   <button type="button" onClick={() => lockChar(c.id)} className="btn-gold text-black text-xs px-4 py-2 rounded-xl">

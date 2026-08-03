@@ -22,6 +22,8 @@ const ALLOWED_FIELDS = [
   'adFormatId',
   'environments',
   'defaultEnvironmentId',
+  'directorsMarkInserted',
+  'calibrationReport',
   'isPublic',
   'isFirstCut',
   'firstCutPath',

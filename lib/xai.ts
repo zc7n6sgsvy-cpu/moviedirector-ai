@@ -1,11 +1,22 @@
 export type VideoMode = 'text-to-video' | 'image-to-video' | 'reference-to-video' | 'extend-video';
 
+/** xAI Imagine Video 1.5 — multi-image reference cap (docs / product) */
+export const MAX_VIDEO_REFERENCE_IMAGES = 7;
+/** Preset voices per request on grok-imagine-video-1.5 */
+export const MAX_VIDEO_REFERENCE_VOICES = 3;
+
 export type GenerateVideoInput = {
   prompt: string;
   mode?: VideoMode;
   imageUrl?: string;
   videoUrl?: string;
+  /** Up to 7 public HTTPS image URLs for reference-to-video */
   referenceImageUrls?: string[];
+  /**
+   * Preset TTS voice ids (ara, eve, leo, rex, sal…) for reference-to-video.
+   * xAI maps these as <AUDIO_0>… in the prompt. Custom clip upload is partner-only.
+   */
+  referenceVoiceIds?: string[];
   duration?: number;
   aspectRatio?: string;
   resolution?: string;
@@ -18,7 +29,8 @@ type VideoJobResult = {
   model?: string;
 };
 
-const DEFAULT_MODEL = process.env.XAI_VIDEO_MODEL || 'grok-imagine-video';
+/** Default: Imagine Video 1.5 (1080p text/i2v, multi-ref, voice presets). */
+const DEFAULT_MODEL = process.env.XAI_VIDEO_MODEL || 'grok-imagine-video-1.5';
 
 function getApiKey() {
   const key = process.env.XAI_API_KEY;
@@ -94,20 +106,42 @@ export async function generateVideo(input: GenerateVideoInput): Promise<VideoJob
     return pollVideoJob(data.request_id);
   }
 
+  // 1080p supported on 1.5 for text/i2v; reference-to-video capped at 720p per xAI docs
+  const wants1080 = (input.resolution || '').toLowerCase() === '1080p';
+  const resolution =
+    mode === 'reference-to-video' && wants1080
+      ? '720p'
+      : input.resolution || (model.includes('1.5') ? '720p' : '720p');
+
   const body: Record<string, unknown> = {
     model,
     prompt: input.prompt,
     duration,
     aspect_ratio: input.aspectRatio || '16:9',
-    resolution: input.resolution || '720p',
+    resolution,
   };
 
+  // xAI forbids combining image + reference_images — pick one mode
   if (mode === 'image-to-video' && input.imageUrl) {
     body.image = { url: input.imageUrl };
+  } else if (
+    (mode === 'reference-to-video' || (!input.imageUrl && input.referenceImageUrls?.length)) &&
+    input.referenceImageUrls?.length
+  ) {
+    body.reference_images = [
+      ...new Set(input.referenceImageUrls.filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u))),
+    ]
+      .slice(0, MAX_VIDEO_REFERENCE_IMAGES)
+      .map((url) => ({ url }));
   }
 
-  if (mode === 'reference-to-video' && input.referenceImageUrls?.length) {
-    body.reference_images = input.referenceImageUrls.map((url) => ({ url }));
+  // Preset voice refs (1.5) — partner-gated in some regions; safe to send when present
+  const voices = (input.referenceVoiceIds || [])
+    .map((v) => String(v || '').trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, MAX_VIDEO_REFERENCE_VOICES);
+  if (voices.length && (mode === 'reference-to-video' || body.reference_images)) {
+    body.reference_audios = voices.map((voice_id) => ({ voice_id }));
   }
 
   const requestId = await startVideoJob(body);

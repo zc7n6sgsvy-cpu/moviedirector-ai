@@ -87,18 +87,31 @@ export async function processGenerationJob(jobId: string) {
           .filter((s) => Number(s.number) < Number(shot.number) && s.videoUrl)
           .sort((a, b) => Number(b.number) - Number(a.number))[0];
 
+        const voiceIds = (
+          (project.characters as Array<{ id?: string; ttsVoiceId?: string; voiceProfile?: { presetVoiceId?: string } }>) ||
+          []
+        )
+          .filter((c) => (shot.characterIds as string[] | undefined)?.includes(c.id || ''))
+          .map((c) => c.ttsVoiceId || c.voiceProfile?.presetVoiceId)
+          .filter(Boolean) as string[];
+
+        const mode = prevShot?.videoUrl && !shot.imageUrl
+          ? 'extend-video'
+          : shot.imageUrl
+            ? 'image-to-video'
+            : referenceImageUrls.length
+              ? 'reference-to-video'
+              : 'text-to-video';
+
         const result = await generateVideo({
           prompt,
-          mode: prevShot?.videoUrl && !shot.imageUrl
-            ? 'extend-video'
-            : shot.imageUrl
-              ? 'image-to-video'
-              : referenceImageUrls.length
-                ? 'reference-to-video'
-                : 'text-to-video',
-          imageUrl: shot.imageUrl as string | undefined,
-          videoUrl: prevShot?.videoUrl as string | undefined,
-          referenceImageUrls,
+          mode,
+          imageUrl: mode === 'image-to-video' ? (shot.imageUrl as string | undefined) : undefined,
+          videoUrl: mode === 'extend-video' ? (prevShot?.videoUrl as string | undefined) : undefined,
+          referenceImageUrls:
+            mode === 'reference-to-video' ? referenceImageUrls.slice(0, 7) : undefined,
+          referenceVoiceIds:
+            mode === 'reference-to-video' && voiceIds.length ? voiceIds.slice(0, 3) : undefined,
           duration: Number(shot.duration) || 8,
         });
 

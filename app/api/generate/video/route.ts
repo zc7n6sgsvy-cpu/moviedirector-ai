@@ -46,7 +46,19 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { prompt, imageUrl, videoUrl, referenceImageUrls, duration, mode, projectId, shotId } = body;
+  const {
+    prompt,
+    imageUrl,
+    videoUrl,
+    referenceImageUrls,
+    referenceVoiceIds,
+    duration,
+    mode,
+    projectId,
+    shotId,
+    resolution,
+    aspectRatio,
+  } = body;
   const quality: GenQuality = body.quality === 'draft' ? 'draft' : 'final';
 
   if (!prompt) return NextResponse.json({ error: 'prompt required' }, { status: 400 });
@@ -66,8 +78,16 @@ export async function POST(req: NextRequest) {
     const charge = await chargeGeneration(auth.userId, 'video', credits, {
       projectId,
       shotId,
-      metadata: { duration: effectiveDuration, mode, quality, isRetake },
-      description: `Video ${quality}${isRetake ? ' retake' : ''} ${effectiveDuration}s (${credits} credits)`,
+      metadata: {
+        duration: effectiveDuration,
+        mode,
+        quality,
+        isRetake,
+        refs: Array.isArray(referenceImageUrls) ? referenceImageUrls.length : 0,
+        voices: Array.isArray(referenceVoiceIds) ? referenceVoiceIds.length : 0,
+        model: 'grok-imagine-video-1.5',
+      },
+      description: `Video ${quality}${isRetake ? ' retake' : ''} ${effectiveDuration}s 1.5 (${credits} credits)`,
     });
     chargedAmount = charge.creditsCharged;
     wasFree = charge.free;
@@ -76,9 +96,12 @@ export async function POST(req: NextRequest) {
       prompt,
       imageUrl,
       videoUrl,
-      referenceImageUrls,
+      referenceImageUrls: Array.isArray(referenceImageUrls) ? referenceImageUrls : undefined,
+      referenceVoiceIds: Array.isArray(referenceVoiceIds) ? referenceVoiceIds : undefined,
       duration: effectiveDuration,
       mode,
+      resolution: resolution || '720p',
+      aspectRatio: aspectRatio || '16:9',
     });
 
     const stored = await persistRemoteAsset(

@@ -23,6 +23,8 @@ export interface IProject extends Document {
   adFormatId?: string;
   environments?: unknown[];
   defaultEnvironmentId?: string;
+  directorsMarkInserted?: boolean;
+  calibrationReport?: Record<string, unknown>;
   isPublic?: boolean;
   isFirstCut?: boolean;
   firstCutPath?: string;
@@ -50,6 +52,8 @@ const ProjectSchema: Schema = new Schema(
     adFormatId: String,
     environments: { type: [Schema.Types.Mixed], default: [] },
     defaultEnvironmentId: String,
+    directorsMarkInserted: { type: Boolean, default: false },
+    calibrationReport: Schema.Types.Mixed,
     isPublic: { type: Boolean, default: false },
     isFirstCut: { type: Boolean, default: false, index: true },
     firstCutPath: { type: String },
